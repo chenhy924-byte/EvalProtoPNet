@@ -7,11 +7,13 @@ from tqdm import tqdm
 
 from util.datasets import Cub2011Eval
 from util.preprocess import mean, std
-from util.local_parts import id_to_path, id_to_part_loc, id_to_bbox, part_num, in_bbox
+# local_parts 仅在 CUB 部件评估时按需导入，避免赤足数据集运行时因缺少 CUB 标注文件而报错
 
 
-def perturb_img(norm_img, std=0.2, eps=0.25):
-    noise = torch.zeros(norm_img.shape).normal_(mean=0, std=std).cuda()
+def perturb_img(norm_img, std=0.2, eps=0.25, device=None):
+    if device is None:
+        device = norm_img.device
+    noise = torch.zeros(norm_img.shape, device=device).normal_(mean=0, std=std)
     noise = torch.clip(noise, min=-eps, max=eps)    # Constrain the maximum absolute value, ensuring that the noise is imperceptible by humans
     perturb_img = norm_img + noise
     return perturb_img
@@ -19,6 +21,7 @@ def perturb_img(norm_img, std=0.2, eps=0.25):
 
 @torch.no_grad()
 def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
+    from util.local_parts import id_to_path, id_to_part_loc, id_to_bbox, part_num, in_bbox
     ppnet.eval()
     ppnet_without_ddp = ppnet.module if hasattr(ppnet, 'module') else ppnet
     img_size = ppnet_without_ddp.img_size
@@ -37,9 +40,10 @@ def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
 
     # Infer on the whole test dataset
     all_proto_acts, all_targets, all_img_ids = [], [], []
+    dev = next(ppnet.parameters()).device
     for _, (data, targets, img_ids) in tqdm(enumerate(test_loader)):
-        data = data.cuda()
-        targets = targets.cuda()
+        data = data.to(dev)
+        targets = targets.to(dev)
 
         if use_noise:   # This is used when calculating stability score
             data = perturb_img(data)
@@ -48,7 +52,7 @@ def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
         # Select the prototypes belonging to the ground-truth class of each image
         fea_size = proto_acts.shape[-1]
         proto_indices = (targets * proto_per_class).unsqueeze(dim=-1).repeat(1, proto_per_class)
-        proto_indices += torch.arange(proto_per_class).cuda()   # The indexes of prototypes belonging to the ground-truth class of each image
+        proto_indices += torch.arange(proto_per_class, device=dev)   # The indexes of prototypes belonging to the ground-truth class of each image
         proto_indices = proto_indices[:, :, None, None].repeat(1, 1, fea_size, fea_size)
         proto_acts = torch.gather(proto_acts, 1, proto_indices) # (B, proto_per_class, fea_size, fea_size)
 
@@ -125,6 +129,9 @@ def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
 
 
 def evaluate_consistency(ppnet, args, half_size=36, part_thresh=0.8):
+    # 赤足压力数据集无 CUB 部件标注，不计算基于部件的一致性
+    if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
+        return 0.0
     all_proto_to_part, all_proto_part_mask = get_corresponding_object_parts(ppnet, args, half_size)
     
     all_proto_consis = []
@@ -154,6 +161,8 @@ def evaluate_consistency(ppnet, args, half_size=36, part_thresh=0.8):
 
 
 def evaluate_stability(ppnet, args, half_size=36):
+    if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
+        return 0.0
     all_proto_to_part, _ = get_corresponding_object_parts(ppnet, args, half_size, use_noise=False)
     all_proto_to_part_noise, _ = get_corresponding_object_parts(ppnet, args, half_size, use_noise=True)
 

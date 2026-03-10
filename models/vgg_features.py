@@ -1,3 +1,4 @@
+import os
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
@@ -202,7 +203,24 @@ def vgg16_features(pretrained=False, **kwargs):
         kwargs['init_weights'] = False
     model = VGG_features(cfg['D'], batch_norm=False, **kwargs)
     if pretrained:
-        my_dict = model_zoo.load_url(model_urls['vgg16'], model_dir=model_dir)
+        bad_path = os.path.join(model_dir, 'vgg16-397923af.pth')
+        last_err = None
+        for attempt in range(3):
+            try:
+                my_dict = model_zoo.load_url(model_urls['vgg16'], model_dir=model_dir)
+                break
+            except RuntimeError as e:
+                last_err = e
+                if 'unexpected EOF' in str(e) or 'corrupted' in str(e):
+                    if os.path.isfile(bad_path):
+                        try:
+                            os.remove(bad_path)
+                        except OSError:
+                            pass
+                else:
+                    raise
+        else:
+            raise last_err
         keys_to_remove = set()
         for key in my_dict:
             if key.startswith('classifier'):

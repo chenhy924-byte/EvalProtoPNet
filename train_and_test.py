@@ -29,9 +29,10 @@ def _train_or_test(model, epoch, dataloader, tb_writer, iteration, optimizer=Non
     logger.info("Start train one epoch")
     it = 0
 
+    dev = args.device if (args is not None and hasattr(args, 'device')) else (torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     for image, label in metric_logger.log_every(dataloader, print_freq, header):
-        input = image.cuda()
-        target = label.cuda()
+        input = image.to(dev)
+        target = label.to(dev)
         grad_req = torch.enable_grad() if is_train else torch.no_grad()
         with grad_req:
             output, (min_distances, proto_acts, shallow_feas, deep_feas) = model(input)

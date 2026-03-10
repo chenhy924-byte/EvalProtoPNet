@@ -51,15 +51,16 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
 
     # Infer on the whole test dataset
     all_proto_acts, all_targets, all_img_ids = [], [], []
+    dev = next(ppnet.parameters()).device
     for _, (data, targets, img_ids) in tqdm(enumerate(test_loader)):
-        data = data.cuda()
-        targets = targets.cuda()
+        data = data.to(dev)
+        targets = targets.to(dev)
 
         _, proto_acts = ppnet_without_ddp.push_forward(data)
         # Select the prototypes belonging to the ground-truth class of each image
         fea_size = proto_acts.shape[-1]
         proto_indices = (targets * proto_per_class).unsqueeze(dim=-1).repeat(1, proto_per_class)
-        proto_indices += torch.arange(proto_per_class).cuda()   # The indexes of prototypes belonging to the ground-truth class of each image
+        proto_indices += torch.arange(proto_per_class, device=dev)   # The indexes of prototypes belonging to the ground-truth class of each image
         proto_indices = proto_indices[:, :, None, None].repeat(1, 1, fea_size, fea_size)
         proto_acts = torch.gather(proto_acts, 1, proto_indices) # (B, proto_per_class, fea_size, fea_size)
 
@@ -176,9 +177,10 @@ parser.add_argument('--add_on_layers_type', type=str, default='regular')
 parser.add_argument('--resume', type=str)
 args = parser.parse_args()
 
-os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
+if args.gpuid:
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 img_size = args.input_size
-device = torch.device('cuda')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load the model
 ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
@@ -187,7 +189,7 @@ ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
                               num_classes=args.nb_classes,
                               prototype_activation_function=args.prototype_activation_function,
                               add_on_layers_type=args.add_on_layers_type)
-ppnet = ppnet.cuda()
+ppnet = ppnet.to(device)
 ppnet_multi = torch.nn.DataParallel(ppnet)
 
 if args.resume:

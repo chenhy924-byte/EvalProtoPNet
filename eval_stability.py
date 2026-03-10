@@ -22,9 +22,10 @@ parser.add_argument('--add_on_layers_type', type=str, default='regular')
 parser.add_argument('--resume', type=str)
 args = parser.parse_args()
 
-os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
+if args.gpuid:
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 img_size = args.input_size
-device = torch.device('cuda')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load the model
 ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
@@ -33,12 +34,12 @@ ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
                               num_classes=args.nb_classes,
                               prototype_activation_function=args.prototype_activation_function,
                               add_on_layers_type=args.add_on_layers_type)
-ppnet = ppnet.cuda()
+ppnet = ppnet.to(device)
 ppnet_multi = torch.nn.DataParallel(ppnet)
 
 if args.resume:
     checkpoint = torch.load(args.resume, map_location='cpu')
-ppnet.load_state_dict(checkpoint['model'])
+    ppnet.load_state_dict(checkpoint['model'])
 
 stability_score = evaluate_stability(ppnet, args)
 print('Stability Score : {:.2f}%'.format(stability_score))

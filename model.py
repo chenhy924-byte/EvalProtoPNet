@@ -155,7 +155,7 @@ class OursNet(nn.Module):
 
     def get_clst_loss(self, min_distances, label):
         max_dist = (self.prototype_shape[1] * self.prototype_shape[2] * self.prototype_shape[3])
-        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, label]).cuda()
+        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, label]).to(label.device)
         inverted_distances, _ = torch.max((max_dist - min_distances) * prototypes_of_correct_class, dim=1)
         cluster_cost = torch.mean(max_dist - inverted_distances)
 
@@ -163,7 +163,7 @@ class OursNet(nn.Module):
     
     def get_sep_loss(self, min_distances, label):
         max_dist = (self.prototype_shape[1] * self.prototype_shape[2] * self.prototype_shape[3])
-        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, label]).cuda()
+        prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, label]).to(label.device)
         prototypes_of_wrong_class = 1 - prototypes_of_correct_class
         inverted_distances_to_nontarget_prototypes, _ = \
             torch.max((max_dist - min_distances) * prototypes_of_wrong_class, dim=1)
@@ -176,7 +176,7 @@ class OursNet(nn.Module):
         subspace_basis_matrix = cur_basis_matrix.reshape(self.num_classes, self.num_prototypes_per_class, self.prototype_shape[1])
         subspace_basis_matrix_T = torch.transpose(subspace_basis_matrix,1,2)
         orth_operator = torch.matmul(subspace_basis_matrix, subspace_basis_matrix_T)
-        I_operator = torch.eye(subspace_basis_matrix.size(1), subspace_basis_matrix.size(1)).cuda()
+        I_operator = torch.eye(subspace_basis_matrix.size(1), subspace_basis_matrix.size(1), device=self.prototype_vectors.device, dtype=self.prototype_vectors.dtype)
         difference_value = orth_operator - I_operator
         ortho_cost = torch.sum(torch.relu(torch.norm(difference_value,p=1,dim=[1,2]) - 0))
 
@@ -191,7 +191,7 @@ class OursNet(nn.Module):
         # Select the prototypes corresponding to the label
         proto_per_class = self.num_prototypes_per_class
         proto_indices = (label * proto_per_class).unsqueeze(dim=-1).repeat(1, proto_per_class)
-        proto_indices += torch.arange(proto_per_class).cuda()   # (B, 10), get 10 indices of activation maps of each sample
+        proto_indices += torch.arange(proto_per_class, device=label.device)   # (B, 10), get 10 indices of activation maps of each sample
         max_positions = proto_acts.argmax(dim=-1)   # (B, 2000)
         max_positions = torch.gather(max_positions, 1, proto_indices)   # (B, 10)
         
