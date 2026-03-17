@@ -189,7 +189,7 @@ parser.add_argument('--half_size', type=int, default=24, help='half size of bbox
 parser.add_argument('--bbox_thickness', type=int, default=2, help='thickness of bbox rectangle')
 
 # Model
-parser.add_argument('--base_architecture', type=str, default='vgg16')
+parser.add_argument('--base_architecture', type=str, default='resnet34')
 parser.add_argument('--input_size', default=224, type=int, help='images input size')
 parser.add_argument('--prototype_shape', nargs='+', type=int, default=[2000, 64, 1, 1])
 parser.add_argument('--prototype_activation_function', type=str, default='log')
@@ -220,6 +220,9 @@ def main():
             train_dir = os.path.join(args.data_path, 'train_cropped')
         args.nb_classes = len([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
         args.prototype_shape[0] = args.nb_classes * args.num_prototypes_per_class
+
+    if args.vis_classes is None:
+        args.vis_classes = list(range(args.nb_classes))
 
 # Load the model
     ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
