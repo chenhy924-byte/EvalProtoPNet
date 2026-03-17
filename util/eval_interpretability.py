@@ -4,8 +4,9 @@ import torch
 import numpy as np
 import torchvision.transforms as transforms
 from tqdm import tqdm
+import platform
 
-from util.datasets import Cub2011Eval
+from util.datasets import Cub2011Eval, BarefootEval
 from util.preprocess import mean, std
 # local_parts 仅在 CUB 部件评估时按需导入，避免赤足数据集运行时因缺少 CUB 标注文件而报错
 
@@ -21,7 +22,13 @@ def perturb_img(norm_img, std=0.2, eps=0.25, device=None):
 
 @torch.no_grad()
 def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
-    from util.local_parts import id_to_path, id_to_part_loc, id_to_bbox, part_num, in_bbox
+    if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
+        from util.barefoot_parts import load_barefoot_parts, in_bbox
+        id_to_path, id_to_part_loc, id_to_bbox, part_num = load_barefoot_parts(args.data_path)
+        EvalDS = BarefootEval
+    else:
+        from util.local_parts import id_to_path, id_to_part_loc, id_to_bbox, part_num, in_bbox
+        EvalDS = Cub2011Eval
     ppnet.eval()
     ppnet_without_ddp = ppnet.module if hasattr(ppnet, 'module') else ppnet
     img_size = ppnet_without_ddp.img_size
@@ -34,8 +41,17 @@ def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
         normalize
     ])
 
-    test_dataset = Cub2011Eval(args.data_path, train=False, transform=transform)    # CUB test dataset
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.test_batch_size, num_workers=10, pin_memory=True, drop_last=False, shuffle=False)
+    test_dataset = EvalDS(args.data_path, train=False, transform=transform)
+    # Windows spawn requires `if __name__ == '__main__'` guard; use single-worker here for compatibility.
+    num_workers = 0 if platform.system().lower().startswith('win') else 10
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size=args.test_batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        shuffle=False,
+    )
     num_classes = args.nb_classes
 
     # Infer on the whole test dataset
@@ -129,9 +145,6 @@ def get_corresponding_object_parts(ppnet, args, half_size, use_noise=False):
 
 
 def evaluate_consistency(ppnet, args, half_size=36, part_thresh=0.8):
-    # 赤足压力数据集无 CUB 部件标注，不计算基于部件的一致性
-    if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
-        return 0.0
     all_proto_to_part, all_proto_part_mask = get_corresponding_object_parts(ppnet, args, half_size)
     
     all_proto_consis = []
@@ -161,8 +174,6 @@ def evaluate_consistency(ppnet, args, half_size=36, part_thresh=0.8):
 
 
 def evaluate_stability(ppnet, args, half_size=36):
-    if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
-        return 0.0
     all_proto_to_part, _ = get_corresponding_object_parts(ppnet, args, half_size, use_noise=False)
     all_proto_to_part_noise, _ = get_corresponding_object_parts(ppnet, args, half_size, use_noise=True)
 

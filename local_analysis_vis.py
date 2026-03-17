@@ -7,10 +7,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
 from tqdm import tqdm
+import platform
+import datetime
 
-from util.datasets import Cub2011Eval
+from util.datasets import Cub2011Eval, BarefootEval
 from util.preprocess import mean, std
-from util.local_parts import id_to_path, id_to_part_loc, id_to_bbox, part_num, in_bbox
+# local_parts/barefoot_parts are imported lazily inside visualize_corresponding_regions
 
 
 all_colors = [(83, 172, 252), (212, 183, 156), (48, 89, 182), (78, 223, 244), (182, 114, 1),
@@ -24,9 +26,9 @@ def draw_point(img, point, bbox_size=10, color=(0, 0, 255)):
 
 
 def imsave_with_bbox(fname, img_rgb, bbox_height_start, bbox_height_end,
-                    bbox_width_start, bbox_width_end, color=(0, 255, 255)):
+                    bbox_width_start, bbox_width_end, color=(0, 255, 255), thickness=2):
     img_bgr_uint8 = cv2.cvtColor(np.uint8(255*img_rgb), cv2.COLOR_RGB2BGR)
-    cv2.rectangle(img_bgr_uint8, (bbox_width_start, bbox_height_start), (bbox_width_end-1, bbox_height_end-1), color, thickness=2)
+    cv2.rectangle(img_bgr_uint8, (bbox_width_start, bbox_height_start), (bbox_width_end-1, bbox_height_end-1), color, thickness=thickness)
     img_rgb_uint8 = img_bgr_uint8[..., ::-1]
     img_rgb_float = np.float32(img_rgb_uint8) / 255
     plt.imsave(fname, img_rgb_float)
@@ -39,6 +41,14 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
     img_size = ppnet_without_ddp.img_size
     proto_per_class = ppnet_without_ddp.num_prototypes_per_class
 
+    if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
+        from util.barefoot_parts import load_barefoot_parts, in_bbox
+        id_to_path, id_to_part_loc, id_to_bbox, part_num = load_barefoot_parts(args.data_path)
+        EvalDS = BarefootEval
+    else:
+        from util.local_parts import id_to_path, id_to_part_loc, id_to_bbox, part_num, in_bbox
+        EvalDS = Cub2011Eval
+
     normalize = transforms.Normalize(mean=mean, std=std)
     transform = transforms.Compose([
         transforms.Resize((img_size,img_size)),
@@ -46,8 +56,16 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
         normalize
     ])
 
-    test_dataset = Cub2011Eval(args.data_path, train=False, transform=transform)    # CUB test dataset
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.test_batch_size, num_workers=10, pin_memory=True, drop_last=False, shuffle=False)
+    test_dataset = EvalDS(args.data_path, train=False, transform=transform)
+    num_workers = 0 if platform.system().lower().startswith('win') else 10
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size=args.test_batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        shuffle=False,
+    )
 
     # Infer on the whole test dataset
     all_proto_acts, all_targets, all_img_ids = [], [], []
@@ -149,7 +167,7 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
                                     bbox_height_start=region_pred[0],
                                     bbox_height_end=region_pred[1],
                                     bbox_width_start=region_pred[2],
-                                    bbox_width_end=region_pred[3], color=(0, 255, 255))
+                                    bbox_width_end=region_pred[3], color=(0, 255, 255), thickness=args.bbox_thickness)
 
                 # Visualize the corresponding region individually
                 '''
@@ -160,12 +178,15 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpuid', type=str, default='0')
-parser.add_argument('--data_set', default='CUB2011', type=str)
-parser.add_argument('--data_path', type=str, default='datasets/cub200_cropped/')
-parser.add_argument('--nb_classes', type=int, default=200)
+parser.add_argument('--data_set', default='Barefoot_Dataset', type=str)
+parser.add_argument('--data_path', type=str, default='datasets/Barefoot_Dataset/')
+parser.add_argument('--nb_classes', type=int, default=-1)
 parser.add_argument('--test_batch_size', type=int, default=30)
+parser.add_argument('--num_prototypes_per_class', type=int, default=10)
 parser.add_argument('--vis_classes', nargs='+', type=int)
 parser.add_argument('--output_path', type=str, default='output_view/')
+parser.add_argument('--half_size', type=int, default=24, help='half size of bbox for visualization (paper uses 36)')
+parser.add_argument('--bbox_thickness', type=int, default=2, help='thickness of bbox rectangle')
 
 # Model
 parser.add_argument('--base_architecture', type=str, default='vgg16')
@@ -175,26 +196,51 @@ parser.add_argument('--prototype_activation_function', type=str, default='log')
 parser.add_argument('--add_on_layers_type', type=str, default='regular')
 
 parser.add_argument('--resume', type=str)
-args = parser.parse_args()
+def main():
+    args = parser.parse_args()
 
-if args.gpuid:
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
-img_size = args.input_size
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.gpuid:
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
+    img_size = args.input_size
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    checkpoint = None
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        ckpt_num_proto = int(checkpoint['model']['prototype_vectors'].shape[0])
+        args.prototype_shape[0] = ckpt_num_proto
+        if ckpt_num_proto % args.num_prototypes_per_class == 0:
+            inferred_classes = ckpt_num_proto // args.num_prototypes_per_class
+            if args.nb_classes <= 0:
+                args.nb_classes = inferred_classes
+
+    if args.nb_classes <= 0 and args.data_set == 'Barefoot_Dataset':
+        train_dir = os.path.join(args.data_path, 'train_cropped_augmented')
+        if not os.path.isdir(train_dir):
+            train_dir = os.path.join(args.data_path, 'train_cropped')
+        args.nb_classes = len([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+        args.prototype_shape[0] = args.nb_classes * args.num_prototypes_per_class
 
 # Load the model
-ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
-                              pretrained=True, img_size=img_size,
-                              prototype_shape=args.prototype_shape,
-                              num_classes=args.nb_classes,
-                              prototype_activation_function=args.prototype_activation_function,
-                              add_on_layers_type=args.add_on_layers_type)
-ppnet = ppnet.to(device)
-ppnet_multi = torch.nn.DataParallel(ppnet)
+    ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
+                                  pretrained=True, img_size=img_size,
+                                  prototype_shape=args.prototype_shape,
+                                  num_classes=args.nb_classes,
+                                  prototype_activation_function=args.prototype_activation_function,
+                                  add_on_layers_type=args.add_on_layers_type)
+    ppnet = ppnet.to(device)
+    ppnet_multi = torch.nn.DataParallel(ppnet)
 
-if args.resume:
-    checkpoint = torch.load(args.resume, map_location='cpu')
-ppnet.load_state_dict(checkpoint['model'])
+    if checkpoint is not None:
+        ppnet.load_state_dict(checkpoint['model'])
 
-args.output_path = os.path.join(args.output_path, args.base_architecture)
-visualize_corresponding_regions(ppnet, args)
+    # Avoid overwriting: add timestamp subdir for each run
+    ts = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    args.output_path = os.path.join(args.output_path, ts, args.base_architecture)
+    visualize_corresponding_regions(ppnet, args, half_size=args.half_size)
+
+
+if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
+    main()

@@ -19,6 +19,7 @@ from util.preprocess import mean, std
 from util.eval_interpretability import evaluate_consistency
 from util.datasets import Barefoot_Dataset
 
+# https://github.com/hqhQAQ/EvalProtoPNet
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -77,7 +78,7 @@ parser.add_argument('--train_batch_size', default=80, type=int)
 parser.add_argument('--test_batch_size', default=150, type=int)
 
 # Model
-parser.add_argument('--base_architecture', type=str, default='vgg16')
+parser.add_argument('--base_architecture', type=str, default='resnet34')
 parser.add_argument('--input_size', default=224, type=int, help='images input size')
 parser.add_argument('--save_ep_freq', default=400, type=int, help='save epoch frequency')
 parser.add_argument('--num_prototypes_per_class', type=int, default=10, help='prototypes per class; total prototypes = num_classes * this')

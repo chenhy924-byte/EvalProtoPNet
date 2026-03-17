@@ -1,75 +1,119 @@
-#/!bin/bash
+#!/usr/bin/env bash
 
-export PYTHONPATH=./:$PYTHONPATH
-export CUDA_VISIBLE_DEVICES=0,1
+set -euo pipefail
 
-model=$1
-num_gpus=$2
+# Make PYTHONPATH safe even when unset (bash `set -u`).
+export PYTHONPATH="./:${PYTHONPATH:-}"
 
-# num_gpus=2
+model="${1:-}"
+num_gpus="${2:-}"
+data_path="${3:-datasets/Barefoot_Dataset}"
+output_root="${4:-output_cosine}"
+
+if [[ -z "$model" || -z "$num_gpus" ]]; then
+  echo "Usage: sh scripts/train.sh <model> <num_gpus> [data_path] [output_root]"
+  echo "  - model: resnet34|resnet152|vgg19|densenet121|densenet161|..."
+  echo "  - num_gpus: 0=CPU, 1=single GPU, >=2=DDP multi-GPU"
+  echo "  - data_path: datasets/Barefoot_Dataset_2|_5|_200 (default: datasets/Barefoot_Dataset)"
+  echo "  - output_root: output directory root (default: output_cosine)"
+  exit 2
+fi
+
 use_port=2681
-# model=resnet34
-# model=resnet152
-# model=vgg19
-# model=densenet121
-# model=densenet161
-# model=resnet50_inat
-train_batch_size=80
-test_batch_size=150
+data_set="Barefoot_Dataset"
 
+# Paper-aligned defaults (shared across backbones in the paper's settings)
 seed=1028
 opt=adam
 lr=1e-4
-
-warmup_lr=1e-4
 warmup_epochs=5
-
 decay_epochs=3
 decay_rate=0.2
 sched=step
 epochs=12
-output_dir=output_cosine/
 input_size=224
 dim=64
-# Loss
-features_lr=$lr
+
+# Loss / module hyper-params
+features_lr="$lr"
 add_on_layers_lr=3e-3
 prototype_vectors_lr=3e-3
-
+activation_weight_lr=1e-6
 use_ortho_loss=True
 ortho_coe=1e-4
 consis_coe=0.50
 consis_thresh=0.10
+num_prototypes_per_class=10
+
+# Batch size tweaks (optional, for OOM safety on smaller GPUs)
+train_batch_size=80
+test_batch_size=150
+case "$model" in
+  vgg19|resnet152|densenet161)
+    train_batch_size=40
+    test_batch_size=80
+    ;;
+  densenet121|resnet34)
+    train_batch_size=80
+    test_batch_size=150
+    ;;
+  *)
+    train_batch_size=80
+    test_batch_size=150
+    ;;
+esac
 
 ft=train
+timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
+run_name="${timestamp}-${seed}-${lr}-${opt}-${epochs}-${ft}"
+output_dir="${output_root}/${data_set}/${model}/${run_name}"
 
-for data_set in CUB2011;
-do
-    prototype_num=2000
-    data_path=datasets/cub200_cropped
-    
-    python -m torch.distributed.launch --nproc_per_node=$num_gpus --master_port=$use_port --use_env main.py \
-        --seed=$seed \
-        --output_dir=$output_dir/$data_set/$model/$seed-$lr-$opt-$epochs-$ft \
-        --data_set=$data_set \
-        --data_path=$data_path \
-        --train_batch_size=$train_batch_size \
-        --test_batch_size=$test_batch_size \
-        --base_architecture=$model \
-        --input_size=$input_size \
-        --prototype_shape $prototype_num $dim 1 1 \
-        --use_ortho_loss=$use_ortho_loss \
-        --ortho_coe=$ortho_coe \
-        --consis_coe=$consis_coe \
-        --consis_thresh=$consis_thresh \
-        --opt=$opt \
-        --sched=$sched \
-        --lr=$lr \
-        --features_lr=$features_lr \
-        --add_on_layers_lr=$add_on_layers_lr \
-        --prototype_vectors_lr=$prototype_vectors_lr \
-        --epochs=$epochs \
-        --warmup_epochs=$warmup_epochs \
-        --decay_epochs=$decay_epochs \
-        --decay_rate=$decay_rate
-done
+common_args=(
+  --seed="$seed"
+  --output_dir="$output_dir"
+  --data_set="$data_set"
+  --data_path="$data_path"
+  --train_batch_size="$train_batch_size"
+  --test_batch_size="$test_batch_size"
+  --base_architecture="$model"
+  --input_size="$input_size"
+  --num_prototypes_per_class="$num_prototypes_per_class"
+  --prototype_activation_function=log
+  --add_on_layers_type=regular
+  --use_ortho_loss="$use_ortho_loss"
+  --ortho_coe="$ortho_coe"
+  --consis_coe="$consis_coe"
+  --consis_thresh="$consis_thresh"
+  --opt="$opt"
+  --sched="$sched"
+  --lr="$lr"
+  --features_lr="$features_lr"
+  --add_on_layers_lr="$add_on_layers_lr"
+  --prototype_vectors_lr="$prototype_vectors_lr"
+  --activation_weight_lr="$activation_weight_lr"
+  --epochs="$epochs"
+  --warmup_epochs="$warmup_epochs"
+  --decay_epochs="$decay_epochs"
+  --decay_rate="$decay_rate"
+)
+
+if [[ "$num_gpus" -eq 0 ]]; then
+  echo ">>> num_gpus=0: CPU single-process"
+  python main.py --device cpu "${common_args[@]}"
+elif [[ "$num_gpus" -eq 1 ]]; then
+  echo ">>> num_gpus=1: single-GPU single-process"
+  export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+  python main.py --device cuda "${common_args[@]}"
+else
+  echo ">>> num_gpus=${num_gpus}: multi-GPU DDP (paper logic)"
+  if [[ -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    # default to 0..num_gpus-1
+    CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((num_gpus-1)))"
+    export CUDA_VISIBLE_DEVICES
+  fi
+  if command -v torchrun >/dev/null 2>&1; then
+    torchrun --nproc_per_node="$num_gpus" --master_port="$use_port" main.py "${common_args[@]}"
+  else
+    python -m torch.distributed.launch --nproc_per_node="$num_gpus" --master_port="$use_port" --use_env main.py "${common_args[@]}"
+  fi
+fi

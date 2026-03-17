@@ -65,6 +65,73 @@ class Cub2011Eval(Dataset):
         return img, target, img_id
 
 
+class BarefootEval(Dataset):
+    """
+    Eval dataset for Barefoot_Dataset using CUB-style metadata files:
+      - images.txt
+      - image_class_labels.txt
+      - train_test_split.txt
+
+    The `images.txt` filepath already contains subdir, e.g.:
+      test_cropped/000/xxx.jpg
+    so we directly join root + filepath.
+    """
+
+    def __init__(self, root, train=False, transform=None):
+        self.root = os.path.expanduser(root)
+        self.transform = transform
+        self.loader = default_loader
+        self.train = train
+
+        if not self._check_integrity():
+            raise RuntimeError('BarefootEval metadata not found or corrupted.')
+
+    def _load_metadata(self):
+        images = pd.read_csv(os.path.join(self.root, 'images.txt'), sep=' ',
+                             names=['img_id', 'filepath'])
+        image_class_labels = pd.read_csv(os.path.join(self.root, 'image_class_labels.txt'),
+                                         sep=' ', names=['img_id', 'target'])
+        train_test_split = pd.read_csv(os.path.join(self.root, 'train_test_split.txt'),
+                                       sep=' ', names=['img_id', 'is_training_img'])
+
+        data = images.merge(image_class_labels, on='img_id')
+        self.data = data.merge(train_test_split, on='img_id')
+
+        if self.train:
+            self.data = self.data[self.data.is_training_img == 1]
+        else:
+            self.data = self.data[self.data.is_training_img == 0]
+
+    def _check_integrity(self):
+        try:
+            self._load_metadata()
+        except Exception:
+            return False
+        if len(self.data) == 0:
+            return False
+        # spot-check first few
+        for _, row in self.data.head(5).iterrows():
+            filepath = os.path.join(self.root, str(row.filepath))
+            if not os.path.isfile(filepath):
+                return False
+        return True
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data.iloc[idx]
+        path = os.path.join(self.root, str(sample.filepath))
+        target = int(sample.target) - 1
+        img = self.loader(path)
+        img_id = int(sample.img_id)
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        return img, target, img_id
+
+
 class Barefoot_Dataset(Dataset):
     """
     赤足压力足迹数据集：从 train_cropped_augmented / test_cropped 加载 JPG 压力图。
