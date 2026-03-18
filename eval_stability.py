@@ -4,7 +4,26 @@ import torch
 import argparse
 from util.eval_interpretability import evaluate_stability
 import multiprocessing
+import random
+import numpy as np
     
+
+def set_determinism(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # Best-effort deterministic behavior (some ops may still be nondeterministic on GPU)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        pass
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -14,9 +33,12 @@ def main():
     parser.add_argument('--nb_classes', type=int, default=-1)
     parser.add_argument('--test_batch_size', type=int, default=30)
     parser.add_argument('--num_prototypes_per_class', type=int, default=10)
+    parser.add_argument('--half_size', type=int, default=36, help='half size of bbox used to map prototypes to parts (affects consistency/stability)')
+    parser.add_argument('--noise_seed', type=int, default=0, help='base seed for random noise used in stability evaluation')
+    parser.add_argument('--stability_trials', type=int, default=1, help='number of random-noise trials to average for stability score')
 
     # Model
-    parser.add_argument('--base_architecture', type=str, default='vgg16')
+    parser.add_argument('--base_architecture', type=str, default='resnet34')
     parser.add_argument('--input_size', default=224, type=int, help='images input size')
     parser.add_argument('--prototype_shape', nargs='+', type=int, default=[2000, 64, 1, 1])
     parser.add_argument('--prototype_activation_function', type=str, default='log')
@@ -24,6 +46,8 @@ def main():
 
     parser.add_argument('--resume', type=str)
     args = parser.parse_args()
+
+    set_determinism(int(args.noise_seed))
 
     if args.gpuid:
         os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
@@ -60,7 +84,7 @@ def main():
     if checkpoint is not None:
         ppnet.load_state_dict(checkpoint['model'])
 
-    stability_score = evaluate_stability(ppnet, args)
+    stability_score = evaluate_stability(ppnet, args, half_size=args.half_size)
     print('Stability Score : {:.2f}%'.format(stability_score))
 
 
