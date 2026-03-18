@@ -14,9 +14,10 @@ def main():
     parser.add_argument('--nb_classes', type=int, default=-1)
     parser.add_argument('--test_batch_size', type=int, default=30)
     parser.add_argument('--num_prototypes_per_class', type=int, default=10)
+    parser.add_argument('--half_size', type=int, default=36, help='half size of bbox used to map prototypes to parts (affects consistency/stability)')
 
     # Model
-    parser.add_argument('--base_architecture', type=str, default='vgg16')
+    parser.add_argument('--base_architecture', type=str, default='resnet34')
     parser.add_argument('--input_size', default=224, type=int, help='images input size')
     parser.add_argument('--prototype_shape', nargs='+', type=int, default=[2000, 64, 1, 1])
     parser.add_argument('--prototype_activation_function', type=str, default='log')
@@ -62,7 +63,7 @@ def main():
     if checkpoint is not None:
         ppnet.load_state_dict(checkpoint['model'])
 
-    consistency_score = evaluate_consistency(ppnet, args)
+    consistency_score = evaluate_consistency(ppnet, args, half_size=args.half_size)
     print('Consistency Score : {:.2f}%'.format(consistency_score))
 
 

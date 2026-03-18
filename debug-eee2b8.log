@@ -1,4 +1,0 @@
-{"sessionId":"eee2b8","hypothesisId":"H1","location":"img_aug.py:after_parse","message":"args.data_path after parse","data":{"data_path":'datasets/Barefoot_Dataset/',"type":'str'},"timestamp":1773073997161}
-{"sessionId":"eee2b8","hypothesisId":"H2","location":"img_aug.py:before_join","message":"datasets_root_dir before os.path.join","data":{"datasets_root_dir":'datasets/Barefoot_Dataset/',"is_none":False},"timestamp":1773073997161}
-{"sessionId":"eee2b8","hypothesisId":"H1","location":"img_aug.py:after_parse","message":"args.data_path after parse","data":{"data_path":'datasets/Barefoot_Dataset/',"type":'str'},"timestamp":1773074190159}
-{"sessionId":"eee2b8","hypothesisId":"H2","location":"img_aug.py:before_join","message":"datasets_root_dir before os.path.join","data":{"datasets_root_dir":'datasets/Barefoot_Dataset/',"is_none":False},"timestamp":1773074190159}
