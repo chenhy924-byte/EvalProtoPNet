@@ -156,7 +156,7 @@ class OursNet(nn.Module):
     def get_clst_loss(self, min_distances, label):
         max_dist = (self.prototype_shape[1] * self.prototype_shape[2] * self.prototype_shape[3])
         prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, label]).to(label.device)
-        inverted_distances, _ = torch.max((max_dist - min_distances) * prototypes_of_correct_class, dim=1)
+        inverted_distances, _ = torch.max((max_dist - min_distances) * prototypes_of_correct_class.to(min_distances.device).to(min_distances.device), dim=1)
         cluster_cost = torch.mean(max_dist - inverted_distances)
 
         return cluster_cost
@@ -166,7 +166,7 @@ class OursNet(nn.Module):
         prototypes_of_correct_class = torch.t(self.prototype_class_identity[:, label]).to(label.device)
         prototypes_of_wrong_class = 1 - prototypes_of_correct_class
         inverted_distances_to_nontarget_prototypes, _ = \
-            torch.max((max_dist - min_distances) * prototypes_of_wrong_class, dim=1)
+            torch.max((max_dist - min_distances) * prototypes_of_wrong_class.to(min_distances.device).to(min_distances.device), dim=1)
         separation_cost = torch.mean(max_dist - inverted_distances_to_nontarget_prototypes)
 
         return separation_cost
