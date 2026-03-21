@@ -1,0 +1,14 @@
+2026-03-20 11:15:37,279 - <module> - INFO - number of params: 26614676
+2026-03-20 11:15:37,288 - <module> - INFO - Start training for 12 epochs
+2026-03-20 11:15:37,292 - _train_or_test - INFO - Start train one epoch
+2026-03-20 11:16:01,427 - log_every - INFO - Epoch: [0]  [ 0/15]  eta: 0:06:02  loss: 0.6209 (0.6209)  time: 24.1334  data: 13.6169
+2026-03-20 11:18:13,018 - log_every - INFO - Epoch: [0]  [14/15]  eta: 0:00:10  loss: -0.0442 (0.0226)  time: 10.3810  data: 0.9096
+2026-03-20 11:18:14,010 - log_every - INFO - Epoch: [0] Total time: 0:02:36 (10.4478 s / it)
+2026-03-20 11:18:14,023 - _train_or_test - INFO - Start train one epoch
+2026-03-20 11:18:19,875 - log_every - INFO - Epoch: [0]  [0/1]  eta: 0:00:05  loss: 0.1504 (0.1504)  time: 5.8487  data: 4.5943
+2026-03-20 11:18:20,619 - log_every - INFO - Epoch: [0] Total time: 0:00:06 (6.5924 s / it)
+2026-03-20 11:18:22,048 - <module> - INFO - Consistency score of the network on the 3 test images: 25.00%
+2026-03-20 11:18:22,058 - <module> - INFO - Accuracy of the network on the 3 test images: 66.67%
+2026-03-20 11:18:22,058 - <module> - INFO - Max consistency score: 25.00%
+2026-03-20 11:18:22,060 - <module> - INFO - Max accuracy: 66.67%
+2026-03-20 11:18:22,064 - _train_or_test - INFO - Start train one epoch

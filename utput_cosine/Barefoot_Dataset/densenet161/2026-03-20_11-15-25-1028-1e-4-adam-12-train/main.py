@@ -21,6 +21,103 @@ from util.datasets import Barefoot_Dataset
 
 # https://github.com/hqhQAQ/EvalProtoPNet
 
+
+def maybe_write_accuracy_consistency_stability_txt(output_dir: str) -> None:
+    """
+    Create `accuracy_consistency_stability.txt` alongside `checkpoints/` under `output_dir`.
+    If the file already exists, do not overwrite.
+    """
+    out_fp = os.path.join(output_dir, "accuracy_consistency_stability.txt")
+    if os.path.exists(out_fp):
+        return
+
+    content = """p : 
+accuracy : %
+consistency : %
+stability : %
+
+
+gpu : 
+eg_200p : 
+python eval_consistency.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_200 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/200p_2026-03-20_00-42-18-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+python eval_stability.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_200 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/200p_2026-03-20_00-42-18-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+python local_analysis_vis.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_200 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/200p_2026-03-20_00-42-18-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+
+eg_2p : 
+python eval_consistency.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_2 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/2p_2026-03-20_00-43-26-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+python eval_stability.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_2 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/2p_2026-03-20_00-43-26-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+python local_analysis_vis.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_2 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/2p_2026-03-20_00-43-26-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36 
+
+
+eg_5p : 
+python eval_consistency.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_5 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/5p_2026-03-20_00-48-16-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+python eval_stability.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_5 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/5p_2026-03-20_00-48-16-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+python local_analysis_vis.py --data_set Barefoot_Dataset --data_path /root/autodl-tmp/datasets/Barefoot_Dataset_5 --base_architecture resnet34 --resume output_cosine/Barefoot_Dataset/resnet34/5p_2026-03-20_00-48-16-1028-1e-4-adam-12-train/checkpoints/save_model.pth --half_size 36
+
+
+
+
+cpu : 
+eg_2p : 
+python eval_consistency.py `
+  --data_set Barefoot_Dataset `
+  --data_path "datasets/Barefoot_Dataset_2" `
+  --base_architecture resnet34 `
+  --resume "output_cosine/Barefoot_Dataset/resnet34/2p_16min_1028-1e-4-adam-12-train/checkpoints/save_model.pth" `
+  --half_size 36
+
+python eval_stability.py `
+  --data_set Barefoot_Dataset `
+  --data_path "datasets/Barefoot_Dataset_2" `
+  --base_architecture resnet34 `
+  --resume "output_cosine/Barefoot_Dataset/resnet34/2p_16min_1028-1e-4-adam-12-train/checkpoints/save_model.pth" `
+  --half_size 36
+
+python local_analysis_vis.py `
+  --data_set Barefoot_Dataset `
+  --data_path "datasets/Barefoot_Dataset_2" `
+  --base_architecture resnet34 `
+  --resume "output_cosine/Barefoot_Dataset/resnet34/2p_16min_1028-1e-4-adam-12-train/checkpoints/save_model.pth" `
+  --half_size 36 `
+  --vis_classes 0 1
+
+
+eg_5p : 
+python eval_consistency.py `
+  --data_set Barefoot_Dataset `
+  --data_path "datasets/Barefoot_Dataset_5" `
+  --base_architecture resnet34 `
+  --resume "output_cosine/Barefoot_Dataset/resnet34/5p_24min_2026-03-18_02-28-07-1028-1e-4-adam-12-train/checkpoints/save_model.pth" `
+  --half_size 36
+
+python eval_stability.py `
+  --data_set Barefoot_Dataset `
+  --data_path "datasets/Barefoot_Dataset_5" `
+  --base_architecture resnet34 `
+  --resume "output_cosine/Barefoot_Dataset/resnet34/5p_24min_2026-03-18_02-28-07-1028-1e-4-adam-12-train/checkpoints/save_model.pth" `
+  --half_size 36
+
+python local_analysis_vis.py `
+  --data_set Barefoot_Dataset `
+  --data_path "datasets/Barefoot_Dataset_5" `
+  --base_architecture resnet34 `
+  --resume "output_cosine/Barefoot_Dataset/resnet34/5p_24min_2026-03-18_02-28-07-1028-1e-4-adam-12-train/checkpoints/save_model.pth" `
+  --half_size 36 `
+  --vis_classes 0 1
+"""
+
+    os.makedirs(output_dir, exist_ok=True)
+    with open(out_fp, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -314,4 +411,5 @@ if __name__ == '__main__':
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info('Training time {}'.format(total_time_str))
 
-    # Disabled: no longer auto-generate accuracy_consistency_stability.txt.
+    if utils.get_rank() == 0:
+        maybe_write_accuracy_consistency_stability_txt(args.output_dir)
