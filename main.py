@@ -283,14 +283,14 @@ if __name__ == '__main__':
     train_loader = torch.utils.data.DataLoader(
         train_dataset, sampler=sampler_train,
         batch_size=args.train_batch_size,
-        num_workers=4,
-        pin_memory=False,
+        num_workers=8,
+        pin_memory=True,
     )
     test_loader = torch.utils.data.DataLoader(
         test_dataset, sampler=sampler_val,
         batch_size=args.test_batch_size,
-        num_workers=4,
-        pin_memory=False,
+        num_workers=8,
+        pin_memory=True,
     )
 
     # construct the model

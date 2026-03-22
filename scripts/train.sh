@@ -12,7 +12,7 @@ output_root="${4:-output_cosine}"
 
 if [[ -z "$model" || -z "$num_gpus" ]]; then
   echo "Usage: sh scripts/train.sh <model> <num_gpus> [data_path] [output_root]"
-  echo "  - model: resnet34|resnet152|vgg19|densenet121|densenet161|..."
+  echo "  - model: resnet34|resnet152|vgg19|densenet121|densenet161|resnet18|resnet50|resnet101|vgg16|..."
   echo "  - num_gpus: 0=CPU, 1=single GPU, >=2=DDP multi-GPU"
   echo "  - data_path: datasets/Barefoot_Dataset_2|_5|_200 (default: datasets/Barefoot_Dataset)"
   echo "  - output_root: output directory root (default: output_cosine); run folder: <N>p_<model>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train (N=class count)"
@@ -70,20 +70,51 @@ consis_thresh=0.10
 num_prototypes_per_class=10
 
 # Batch size tweaks (optional, for OOM safety on smaller GPUs)
-train_batch_size=80
-test_batch_size=150
+train_batch_size=128
+test_batch_size=256
 case "$model" in
-  vgg19|resnet152|densenet161)
-    train_batch_size=40
-    test_batch_size=80
+  resnet18)
+    train_batch_size=512
+    test_batch_size=1024
     ;;
-  densenet121|resnet34)
+  resnet34)
+    train_batch_size=256
+    test_batch_size=512
+    ;;
+  resnet50)
+    train_batch_size=128
+    test_batch_size=256
+    ;;
+  resnet101)
     train_batch_size=80
-    test_batch_size=150
+    test_batch_size=160
     ;;
+  resnet152)
+    train_batch_size=64
+    test_batch_size=128
+    ;;
+
+  vgg16)
+    train_batch_size=96
+    test_batch_size=128
+    ;;
+  vgg19)
+    train_batch_size=96
+    test_batch_size=128
+    ;;
+
+  densenet121)
+    train_batch_size=128
+    test_batch_size=256
+    ;;
+  densenet161)
+    train_batch_size=64
+    test_batch_size=128
+    ;;
+
   *)
-    train_batch_size=80
-    test_batch_size=150
+    train_batch_size=128
+    test_batch_size=256
     ;;
 esac
 
