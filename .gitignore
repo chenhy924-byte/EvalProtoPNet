@@ -10,3 +10,4 @@ output_cosine/
 output_ablation/
 output_cosine_old/
 output_view_old/ 
+.ipynb_checkpoints/

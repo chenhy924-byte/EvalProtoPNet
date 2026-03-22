@@ -54,7 +54,7 @@ warmup_epochs=5
 decay_epochs=3
 decay_rate=0.2
 sched=step
-epochs=2
+epochs=50
 input_size=224
 dim=64
 
