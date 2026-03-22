@@ -34,12 +34,19 @@ def imsave_with_bbox(fname, img_rgb, bbox_height_start, bbox_height_end,
     plt.imsave(fname, img_rgb_float)
 
 
+def _class_dir_name(label_idx, nb_classes):
+    """Zero-pad class index to match dataset folders (e.g. 000..199)."""
+    nd = max(3, len(str(max(0, int(nb_classes) - 1))))
+    return format(int(label_idx), '0{}d'.format(nd))
+
+
 @torch.no_grad()
 def visualize_corresponding_regions(ppnet, args, half_size=36):
     ppnet.eval()
     ppnet_without_ddp = ppnet.module if hasattr(ppnet, 'module') else ppnet
     img_size = ppnet_without_ddp.img_size
     proto_per_class = ppnet_without_ddp.num_prototypes_per_class
+    nb_classes = getattr(args, 'nb_classes', None) or 0
 
     if getattr(args, 'data_set', None) == 'Barefoot_Dataset':
         from util.barefoot_parts import load_barefoot_parts, in_bbox
@@ -122,7 +129,11 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
         img_num = len(img_ids)
         # Init the saving directories
         for img_idx in range(img_num):
-            img_dir = os.path.join(args.output_path, 'class_{}'.format(test_image_label), 'img_{}'.format(img_idx))
+            img_dir = os.path.join(
+                args.output_path,
+                _class_dir_name(test_image_label, nb_classes),
+                'img_{}'.format(img_idx),
+            )
             if os.path.exists(img_dir) is False:
                 os.makedirs(img_dir, exist_ok=True)
             original_img = class_original_images[img_idx]
@@ -142,7 +153,11 @@ def visualize_corresponding_regions(ppnet, args, half_size=36):
             for img_idx in range(img_num):
                 original_img = class_original_images[img_idx]
                 normalize_img = np.float32(original_img) / 255
-                img_dir = os.path.join(args.output_path, 'class_{}'.format(test_image_label), 'img_{}'.format(img_idx))
+                img_dir = os.path.join(
+                    args.output_path,
+                    _class_dir_name(test_image_label, nb_classes),
+                    'img_{}'.format(img_idx),
+                )
 
                 part_labels = class_part_labels[img_idx]
                 activation_map = class_proto_acts[img_idx, proto_idx]
@@ -224,7 +239,7 @@ def main():
     if args.vis_classes is None:
         args.vis_classes = list(range(args.nb_classes))
 
-# Load the model
+    # Load the model
     ppnet = model.construct_OursNet(base_architecture=args.base_architecture,
                                   pretrained=True, img_size=img_size,
                                   prototype_shape=args.prototype_shape,
@@ -237,9 +252,11 @@ def main():
     if checkpoint is not None:
         ppnet.load_state_dict(checkpoint['model'])
 
-    # Avoid overwriting: add timestamp subdir for each run
-    ts = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    args.output_path = os.path.join(args.output_path, ts, args.base_architecture)
+    # Avoid overwriting: <N>p_<base_architecture>_YYYYMMDD_HHMMSS_img/ (N from checkpoint or train dir)
+    date_part = datetime.datetime.now().strftime('%Y%m%d')
+    time_part = datetime.datetime.now().strftime('%H%M%S')
+    run_dir = f"{args.nb_classes}p_{args.base_architecture}_{date_part}_{time_part}_img"
+    args.output_path = os.path.join(args.output_path, run_dir)
     visualize_corresponding_regions(ppnet, args, half_size=args.half_size)
 
 

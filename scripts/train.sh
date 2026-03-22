@@ -15,12 +15,36 @@ if [[ -z "$model" || -z "$num_gpus" ]]; then
   echo "  - model: resnet34|resnet152|vgg19|densenet121|densenet161|..."
   echo "  - num_gpus: 0=CPU, 1=single GPU, >=2=DDP multi-GPU"
   echo "  - data_path: datasets/Barefoot_Dataset_2|_5|_200 (default: datasets/Barefoot_Dataset)"
-  echo "  - output_root: output directory root (default: output_cosine)"
+  echo "  - output_root: output directory root (default: output_cosine); run folder: <N>p_<model>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train (N=class count)"
   exit 2
 fi
 
 use_port=2681
 data_set="Barefoot_Dataset"
+
+# Auto-detect class count from train_cropped_augmented or train_cropped under data_path
+data_path="${data_path%/}"
+train_aug="${data_path}/train_cropped_augmented"
+train_fb="${data_path}/train_cropped"
+if [[ -d "$train_aug" ]]; then
+  train_dir="$train_aug"
+elif [[ -d "$train_fb" ]]; then
+  train_dir="$train_fb"
+else
+  echo "ERROR: Cannot find train_cropped_augmented or train_cropped under: ${data_path}" >&2
+  exit 1
+fi
+num_classes=0
+shopt -s nullglob
+for d in "${train_dir}"/*/; do
+  [[ -d "$d" ]] || continue
+  num_classes=$((num_classes + 1))
+done
+shopt -u nullglob
+if [[ "$num_classes" -eq 0 ]]; then
+  echo "ERROR: No class subdirectories in: ${train_dir}" >&2
+  exit 1
+fi
 
 # Paper-aligned defaults (shared across backbones in the paper's settings)
 seed=1028
@@ -30,7 +54,7 @@ warmup_epochs=5
 decay_epochs=3
 decay_rate=0.2
 sched=step
-epochs=100
+epochs=2
 input_size=224
 dim=64
 
@@ -64,9 +88,11 @@ case "$model" in
 esac
 
 ft=train
-timestamp="$(date '+%Y-%m-%d_%H-%M-%S')"
-run_name="${timestamp}-${seed}-${lr}-${opt}-${epochs}-${ft}"
-output_dir="${output_root}/${data_set}/${model}/${run_name}"
+# One folder per run: <N>p_<base_architecture>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train
+date_part="$(date '+%Y%m%d')"
+time_part="$(date '+%H%M%S')"
+run_name="${num_classes}p_${model}_${date_part}_${time_part}_${seed}_${lr}_${opt}_${epochs}_${ft}"
+output_dir="${output_root}/${run_name}"
 
 common_args=(
   --seed="$seed"

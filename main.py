@@ -21,6 +21,38 @@ from util.datasets import Barefoot_Dataset
 
 # https://github.com/hqhQAQ/EvalProtoPNet
 
+
+def _barefoot_train_dir_and_nb_classes(data_path):
+    """Resolve train folder and class count (same logic as Barefoot_Dataset / train.sh)."""
+    train_dir = os.path.join(data_path, Barefoot_Dataset.TRAIN_DIR)
+    if not os.path.isdir(train_dir):
+        train_dir = os.path.join(data_path, 'train_cropped')
+    if not os.path.isdir(train_dir):
+        return None, None
+    nb = len(
+        sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+    )
+    return train_dir, nb
+
+
+def _fmt_lr_for_run_name(lr):
+    """
+    Match train.sh run folder strings: bash uses e.g. 1e-4, not 0.0001.
+    """
+    lr = float(lr)
+    known = [
+        (1e-4, '1e-4'),
+        (3e-3, '3e-3'),
+        (1e-6, '1e-6'),
+        (1e-3, '1e-3'),
+        (1e-2, '1e-2'),
+    ]
+    for val, s in known:
+        if abs(lr - val) <= 1e-18 * max(1.0, abs(val)):
+            return s
+    return np.format_float_scientific(lr, precision=6, unique=True, trim='-')
+
+
 def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -68,7 +100,9 @@ def get_outlog(args):
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=1028)
 parser.add_argument('--output_dir', default='output_debug',
-                    help='输出根目录；默认在 output_debug 下按时间戳创建子文件夹，如 output_debug/2026-03-10_14-30-15/')
+                    help='输出根目录。output_debug：自动追加时间戳子目录；'
+                         '若恰为 output_cosine 且 Barefoot 训练，则自动变为 '
+                         '<N>p_<arch>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train（与 train.sh 一致）。')
 parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
 parser.add_argument('--resume', default='', help='resume from checkpoint')  
 # Data（赤足压力数据集：默认路径与子目录）
@@ -116,10 +150,34 @@ if __name__ == '__main__':
     multiprocessing.freeze_support()
     args = parser.parse_args()
 
+    # 先解析类别数（与 train.sh 一致），便于 output_cosine 下自动生成同名 run 目录
+    train_dir = None
+    if args.data_set == 'Barefoot_Dataset':
+        train_dir, nb_early = _barefoot_train_dir_and_nb_classes(args.data_path)
+        if train_dir is None:
+            raise RuntimeError('Training directory not found under data_path: {}'.format(args.data_path))
+        if nb_early == 0:
+            raise RuntimeError('No class subdirectories in: {}'.format(train_dir))
+        args.nb_classes = nb_early
+
     # 默认在 output_debug 下按时间戳创建子文件夹，避免覆盖；手动指定完整路径时则不追加时间戳
     out_base = args.output_dir.rstrip('/\\')
     if out_base == 'output_debug':
         args.output_dir = os.path.join('output_debug', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    elif (
+        out_base == 'output_cosine'
+        and args.data_set == 'Barefoot_Dataset'
+        and not args.eval
+    ):
+        # 与 scripts/train.sh 一致: <N>p_<arch>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train
+        date_part = datetime.datetime.now().strftime('%Y%m%d')
+        time_part = datetime.datetime.now().strftime('%H%M%S')
+        lr_str = _fmt_lr_for_run_name(args.lr)
+        run_name = (
+            f"{args.nb_classes}p_{args.base_architecture}_{date_part}_{time_part}_"
+            f"{args.seed}_{lr_str}_{args.opt}_{args.epochs}_train"
+        )
+        args.output_dir = os.path.join('output_cosine', run_name)
 
     # 设备自适应：统一使用变量 device
     if args.device is not None:
@@ -151,13 +209,16 @@ if __name__ == '__main__':
     shutil.copy(src=os.path.join(os.getcwd(), 'model.py'), dst=model_dir)
     shutil.copy(src=os.path.join(os.getcwd(), 'train_and_test.py'), dst=model_dir)
 
-    # 动态类别数：从训练集文件夹数量得到
-    train_dir = os.path.join(args.data_path, Barefoot_Dataset.TRAIN_DIR)
-    if not os.path.isdir(train_dir):
-        train_dir = os.path.join(args.data_path, 'train_cropped')
-    if not os.path.isdir(train_dir):
-        raise RuntimeError('Training directory not found under data_path: {}'.format(args.data_path))
-    args.nb_classes = len(sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))]))
+    # 动态类别数：Barefoot 已在启动时解析；其它数据集保留原逻辑
+    if args.data_set != 'Barefoot_Dataset':
+        train_dir = os.path.join(args.data_path, Barefoot_Dataset.TRAIN_DIR)
+        if not os.path.isdir(train_dir):
+            train_dir = os.path.join(args.data_path, 'train_cropped')
+        if not os.path.isdir(train_dir):
+            raise RuntimeError('Training directory not found under data_path: {}'.format(args.data_path))
+        args.nb_classes = len(
+            sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+        )
     # 原型层维度：M = num_classes * num_prototypes_per_class
     if args.prototype_shape is None:
         proto_dim = 64
