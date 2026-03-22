@@ -8,3 +8,5 @@ output_view/
 output_debug/
 output_cosine/
 output_ablation/
+output_cosine_old/
+output_view_old/ 
