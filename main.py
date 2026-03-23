@@ -143,6 +143,8 @@ parser.add_argument('--decay_rate', type=float, default=0.1)
 parser.add_argument('--device', default=None, help='device to use (default: cuda if available else cpu)')
 parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 parser.add_argument('--dist-eval', action='store_true', default=False, help='Enabling distributed evaluation')
+parser.add_argument('--use_amp', type=str2bool, default=True, help='enable mixed precision')
+parser.add_argument('--amp_dtype', default='bf16', choices=['bf16', 'fp16'], help='autocast dtype for AMP')
 
 
 if __name__ == '__main__':
@@ -186,6 +188,20 @@ if __name__ == '__main__':
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.device = device
 
+    # AMP / BF16 setup (RTX 4090 supports BF16; auto-fallback when unavailable).
+    bf16_supported = False
+    if device.type == 'cuda':
+        if hasattr(torch.cuda, 'is_bf16_supported'):
+            bf16_supported = torch.cuda.is_bf16_supported()
+        else:
+            major, _ = torch.cuda.get_device_capability()
+            bf16_supported = major >= 8
+    args.use_amp = bool(args.use_amp and device.type == 'cuda')
+    args.use_bf16 = bool(args.use_amp and args.amp_dtype == 'bf16' and bf16_supported)
+    args.use_fp16 = bool(args.use_amp and args.amp_dtype == 'fp16')
+    if args.amp_dtype == 'bf16' and args.use_amp and device.type == 'cuda' and not bf16_supported:
+        print('Warning: BF16 not supported on current CUDA device, fallback to FP32.')
+
     __global_values__ = dict(it=0)
     seed = args.seed + utils.get_rank()
     set_seed(seed)
@@ -194,6 +210,10 @@ if __name__ == '__main__':
     utils.init_distributed_mode(args)
 
     tb_writer, logger = get_outlog(args)
+    logger.info(
+        f"AMP enabled={args.use_amp}, dtype={args.amp_dtype}, "
+        f"use_bf16={args.use_bf16}, device={args.device}"
+    )
 
     # Setting Parameters
     base_architecture = args.base_architecture

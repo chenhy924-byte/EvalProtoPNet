@@ -2,6 +2,7 @@ import torch
 import logging
 import torch.nn.functional as F
 import util.utils as utils
+from contextlib import nullcontext
 
 
 def _train_or_test(model, epoch, dataloader, tb_writer, iteration, optimizer=None,
@@ -30,36 +31,45 @@ def _train_or_test(model, epoch, dataloader, tb_writer, iteration, optimizer=Non
     it = 0
 
     dev = args.device if (args is not None and hasattr(args, 'device')) else (torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    use_bf16 = bool(getattr(args, 'use_bf16', False)) and str(dev).startswith('cuda')
+    use_fp16 = bool(getattr(args, 'use_fp16', False)) and str(dev).startswith('cuda')
     for image, label in metric_logger.log_every(dataloader, print_freq, header):
         input = image.to(dev)
         target = label.to(dev)
         grad_req = torch.enable_grad() if is_train else torch.no_grad()
+        if use_bf16:
+            amp_ctx = torch.cuda.amp.autocast(dtype=torch.bfloat16)
+        elif use_fp16:
+            amp_ctx = torch.cuda.amp.autocast(dtype=torch.float16)
+        else:
+            amp_ctx = nullcontext()
         with grad_req:
-            output, (min_distances, proto_acts, shallow_feas, deep_feas) = model(input)
-            del input
-            # Compute losses
-            cross_entropy = torch.nn.functional.cross_entropy(output, target)
+            with amp_ctx:
+                output, (min_distances, proto_acts, shallow_feas, deep_feas) = model(input)
+                del input
+                # Compute losses
+                cross_entropy = torch.nn.functional.cross_entropy(output, target)
 
-            model_without_ddp = model.module if hasattr(model, 'module') else model
-            # Clst loss
-            cluster_cost = model_without_ddp.get_clst_loss(min_distances, label)
-            # Seq loss
-            separation_cost = model_without_ddp.get_sep_loss(min_distances, label)
-            # Ortho loss
-            ortho_cost = model_without_ddp.get_ortho_loss()
-            # Consis loss
-            consis_cost = model_without_ddp.get_SDFA_loss(proto_acts, shallow_feas, deep_feas, target, consis_thresh=args.consis_thresh)
+                model_without_ddp = model.module if hasattr(model, 'module') else model
+                # Clst loss
+                cluster_cost = model_without_ddp.get_clst_loss(min_distances, label)
+                # Seq loss
+                separation_cost = model_without_ddp.get_sep_loss(min_distances, label)
+                # Ortho loss
+                ortho_cost = model_without_ddp.get_ortho_loss()
+                # Consis loss
+                consis_cost = model_without_ddp.get_SDFA_loss(proto_acts, shallow_feas, deep_feas, target, consis_thresh=args.consis_thresh)
 
-            # evaluation statistics
-            _, predicted = torch.max(output.data, 1)
-            n_examples += target.size(0)
-            n_correct += (predicted == target).sum().item()
+                # evaluation statistics
+                _, predicted = torch.max(output.data, 1)
+                n_examples += target.size(0)
+                n_correct += (predicted == target).sum().item()
 
-            n_batches += 1
-            total_cross_entropy += cross_entropy.item()
-            total_cluster_cost += cluster_cost.item()
-            total_separation_cost += separation_cost.item()
-            total_orth_cost += ortho_cost.item()
+                n_batches += 1
+                total_cross_entropy += cross_entropy.item()
+                total_cluster_cost += cluster_cost.item()
+                total_separation_cost += separation_cost.item()
+                total_orth_cost += ortho_cost.item()
 
         if coefs is not None:
             if epoch >= args.warmup_epochs:
