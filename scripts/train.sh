@@ -46,15 +46,20 @@ if [[ "$num_classes" -eq 0 ]]; then
   exit 1
 fi
 
+
+train_batch_size=64
+test_batch_size=128
+
 # Paper-aligned defaults (shared across backbones in the paper's settings)
 seed=1028
 opt=adam
 lr=1e-4
+
 warmup_epochs=5
 decay_epochs=3
 decay_rate=0.2
 sched=step
-epochs=50
+epochs=20
 input_size=224
 dim=64
 
@@ -63,60 +68,12 @@ features_lr="$lr"
 add_on_layers_lr=3e-3
 prototype_vectors_lr=3e-3
 activation_weight_lr=1e-6
+
 use_ortho_loss=True
 ortho_coe=1e-4
 consis_coe=0.50
 consis_thresh=0.10
 num_prototypes_per_class=10
-
-# Batch size tweaks (optional, for OOM safety on smaller GPUs)
-train_batch_size=128
-test_batch_size=256
-case "$model" in
-  resnet18)
-    train_batch_size=512
-    test_batch_size=1024
-    ;;
-  resnet34)
-    train_batch_size=256
-    test_batch_size=512
-    ;;
-  resnet50)
-    train_batch_size=128
-    test_batch_size=256
-    ;;
-  resnet101)
-    train_batch_size=80
-    test_batch_size=160
-    ;;
-  resnet152)
-    train_batch_size=64
-    test_batch_size=128
-    ;;
-
-  vgg16)
-    train_batch_size=96
-    test_batch_size=128
-    ;;
-  vgg19)
-    train_batch_size=96
-    test_batch_size=128
-    ;;
-
-  densenet121)
-    train_batch_size=128
-    test_batch_size=256
-    ;;
-  densenet161)
-    train_batch_size=64
-    test_batch_size=128
-    ;;
-
-  *)
-    train_batch_size=128
-    test_batch_size=256
-    ;;
-esac
 
 ft=train
 # One folder per run: <N>p_<base_architecture>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train
