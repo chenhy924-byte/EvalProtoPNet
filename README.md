@@ -84,12 +84,12 @@ python local_analysis_vis.py \
 --imgclass $class
 ```
 
-For example, the instruction for evaluating a ResNet34 model with checkpoint path `output_cosine/CUB2011/resnet34/1028-1e-4-adam-12-train/checkpoints/save_model.pth` for the images in category `15`:
+For example, the instruction for evaluating a ResNet34 model with checkpoint path `output_cosine/CUB2011/resnet34/1028-1e-4-adam-12-train/checkpoints/best_model.pth` for the images in category `15`:
 
 ```
 python local_analysis_vis.py \
 --base_architecture resnet34 \
---resume output_cosine/CUB2011/resnet34/1028-1e-4-adam-12-train/checkpoints/save_model.pth \
+--resume output_cosine/CUB2011/resnet34/1028-1e-4-adam-12-train/checkpoints/best_model.pth \
 --imgclass 15
 ```
 

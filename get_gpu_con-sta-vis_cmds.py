@@ -30,7 +30,8 @@ def generate_commands():
 
     # 模板配置
     data_path = f"/root/{storage_type}/datasets/Barefoot_Dataset_200"
-    resume_path = f"output_cosine/{folder_name}/checkpoints/save_model.pth"
+    # main.py now saves best model as best_model.pth and final model as final_model.pth
+    resume_path = f"output_cosine/{folder_name}/checkpoints/best_model.pth"
     
     templates = [
         ("一致性得分", "eval_consistency.py"),

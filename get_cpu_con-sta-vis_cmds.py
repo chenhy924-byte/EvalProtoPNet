@@ -28,7 +28,8 @@ def generate_commands():
 
     # 3. 构造路径参数
     data_path = f"datasets/Barefoot_Dataset_{p_num}"
-    resume_path = f"output_cosine/{folder_name}/checkpoints/save_model.pth"
+    # main.py now saves best model as best_model.pth and final model as final_model.pth
+    resume_path = f"output_cosine/{folder_name}/checkpoints/best_model.pth"
     
     # 4. 定义模板 (使用 PowerShell 的换行符 ` )
     templates = [
