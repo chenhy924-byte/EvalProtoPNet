@@ -11,3 +11,11 @@ output_ablation/
 output_cosine_old/
 output_view_old/ 
 .ipynb_checkpoints/
+
+*.zip
+*.tar.gz
+*.7z
+
+# 模型和日志
+*.pth
+tf-logs/
