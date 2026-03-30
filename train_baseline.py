@@ -90,32 +90,52 @@ def get_outlog(args):
 
 def _build_torchvision_model(model_name: str, num_classes: int, pretrained: bool = True) -> torch.nn.Module:
     model_name = model_name.lower()
+    # Keep backbone forward compatible with different model families.
+    # Only the final classification layer is replaced to match `num_classes`.
+    if model_name == "resnet18":
+        weights = tv_models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        m = tv_models.resnet18(weights=weights)
+        m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
+        return m
+    if model_name == "resnet34":
+        weights = tv_models.ResNet34_Weights.IMAGENET1K_V1 if pretrained else None
+        m = tv_models.resnet34(weights=weights)
+        m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
+        return m
     if model_name == "resnet50":
-        if pretrained:
-            weights = tv_models.ResNet50_Weights.IMAGENET1K_V1
-        else:
-            weights = None
+        weights = tv_models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
         m = tv_models.resnet50(weights=weights)
-        in_features = m.fc.in_features
-        m.fc = torch.nn.Linear(in_features, num_classes)
+        m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
+        return m
+    if model_name == "resnet101":
+        weights = tv_models.ResNet101_Weights.IMAGENET1K_V1 if pretrained else None
+        m = tv_models.resnet101(weights=weights)
+        m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
+        return m
+    if model_name == "resnet152":
+        weights = tv_models.ResNet152_Weights.IMAGENET1K_V1 if pretrained else None
+        m = tv_models.resnet152(weights=weights)
+        m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
         return m
     if model_name == "vgg16":
-        if pretrained:
-            weights = tv_models.VGG16_Weights.IMAGENET1K_V1
-        else:
-            weights = None
+        weights = tv_models.VGG16_Weights.IMAGENET1K_V1 if pretrained else None
         m = tv_models.vgg16(weights=weights)
-        in_features = m.classifier[-1].in_features
-        m.classifier[-1] = torch.nn.Linear(in_features, num_classes)
+        m.classifier[-1] = torch.nn.Linear(m.classifier[-1].in_features, num_classes)
+        return m
+    if model_name == "vgg19":
+        weights = tv_models.VGG19_Weights.IMAGENET1K_V1 if pretrained else None
+        m = tv_models.vgg19(weights=weights)
+        m.classifier[-1] = torch.nn.Linear(m.classifier[-1].in_features, num_classes)
         return m
     if model_name == "densenet121":
-        if pretrained:
-            weights = tv_models.DenseNet121_Weights.IMAGENET1K_V1
-        else:
-            weights = None
+        weights = tv_models.DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None
         m = tv_models.densenet121(weights=weights)
-        in_features = m.classifier.in_features
-        m.classifier = torch.nn.Linear(in_features, num_classes)
+        m.classifier = torch.nn.Linear(m.classifier.in_features, num_classes)
+        return m
+    if model_name == "densenet161":
+        weights = tv_models.DenseNet161_Weights.IMAGENET1K_V1 if pretrained else None
+        m = tv_models.densenet161(weights=weights)
+        m.classifier = torch.nn.Linear(m.classifier.in_features, num_classes)
         return m
     raise ValueError(f"Unsupported --model_name: {model_name}")
 
@@ -134,6 +154,32 @@ def _delete_torch_hub_checkpoint_from_url(url: str) -> None:
         return
 
 
+def _torchvision_pretrained_weights_url(model_name: str) -> str:
+    """
+    Used only for deleting cached pretrained weights on corrupted downloads.
+    """
+    mn = model_name.lower()
+    if mn == "resnet18":
+        return tv_models.ResNet18_Weights.IMAGENET1K_V1.url
+    if mn == "resnet34":
+        return tv_models.ResNet34_Weights.IMAGENET1K_V1.url
+    if mn == "resnet50":
+        return tv_models.ResNet50_Weights.IMAGENET1K_V1.url
+    if mn == "resnet101":
+        return tv_models.ResNet101_Weights.IMAGENET1K_V1.url
+    if mn == "resnet152":
+        return tv_models.ResNet152_Weights.IMAGENET1K_V1.url
+    if mn == "vgg16":
+        return tv_models.VGG16_Weights.IMAGENET1K_V1.url
+    if mn == "vgg19":
+        return tv_models.VGG19_Weights.IMAGENET1K_V1.url
+    if mn == "densenet121":
+        return tv_models.DenseNet121_Weights.IMAGENET1K_V1.url
+    if mn == "densenet161":
+        return tv_models.DenseNet161_Weights.IMAGENET1K_V1.url
+    raise ValueError(f"Unsupported --model_name for pretrained weights: {model_name}")
+
+
 def build_model_with_retry(model_name: str, num_classes: int, pretrained: bool, max_retries: int = 3) -> torch.nn.Module:
     """
     Work around corrupted torchvision weight downloads (e.g. unexpected EOF / central directory missing).
@@ -146,12 +192,9 @@ def build_model_with_retry(model_name: str, num_classes: int, pretrained: bool, 
             msg = str(e).lower()
             if any(k in msg for k in ["central directory", "unexpected eof", "file might be corrupted"]):
                 # delete cached weight and retry
-                if model_name.lower() == "resnet50":
-                    _delete_torch_hub_checkpoint_from_url(tv_models.ResNet50_Weights.IMAGENET1K_V1.url)
-                elif model_name.lower() == "vgg16":
-                    _delete_torch_hub_checkpoint_from_url(tv_models.VGG16_Weights.IMAGENET1K_V1.url)
-                elif model_name.lower() == "densenet121":
-                    _delete_torch_hub_checkpoint_from_url(tv_models.DenseNet121_Weights.IMAGENET1K_V1.url)
+                if pretrained:
+                    url = _torchvision_pretrained_weights_url(model_name)
+                    _delete_torch_hub_checkpoint_from_url(url)
                 last_err = e
                 continue
             raise
@@ -285,7 +328,21 @@ def main():
     parser.add_argument("--input_size", default=224, type=int)
 
     # Baseline model
-    parser.add_argument("--model_name", default="resnet50", choices=["resnet50", "vgg16", "densenet121"])
+    parser.add_argument(
+        "--model_name",
+        default="resnet50",
+        choices=[
+            "resnet18",
+            "resnet34",
+            "resnet50",
+            "resnet101",
+            "resnet152",
+            "vgg16",
+            "vgg19",
+            "densenet121",
+            "densenet161",
+        ],
+    )
     parser.add_argument("--pretrained", type=str2bool, default=True)
 
     # Optimizer & Scheduler (keep consistent knobs)
