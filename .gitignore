@@ -1,21 +1,71 @@
+# Sync .project/sourceTexts/ folder (source text files)
+
+# IDE / editor
 .vscode/
+
+# Python
 __pycache__/
-datasets
-pretrained_models
+*.py[cod]
+
+# Data / assets (local only)
 datasets/
 pretrained_models/
+
+# Outputs / logs
 output_view/
 output_debug/
 output_cosine/
 output_ablation/
 output_cosine_old/
-output_view_old/ 
+output_view_old/
+tf-logs/
+*.pth
 .ipynb_checkpoints/
 
-*.zip
-*.tar.gz
-*.7z
+# Don't sync user-specific SQLite databases
+.project/*.sqlite
 
-# 模型和日志
-*.pth
-tf-logs/
+# Don't sync SQLite auxiliary files
+.project/*.sqlite-wal
+.project/*.sqlite-shm
+
+# Don't sync user-specific files
+.project/complete_drafts.txt
+.project/localProjectSettings.json
+.project/localProjectSwap.json
+copilot-messages.log
+
+# Archive formats
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.gz
+*.bz2
+*.xz
+
+# Windows executables and installers
+*.exe
+*.msi
+*.bat
+*.cmd
+*.com
+*.scr
+*.dll
+
+# macOS executables and disk images
+*.dmg
+*.pkg
+
+# Disk images and virtual machine files
+*.iso
+*.img
+*.vhd
+*.vmdk
+
+# System files
+.DS_Store
+.project/attachments/files/**

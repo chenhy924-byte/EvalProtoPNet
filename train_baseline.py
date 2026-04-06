@@ -1,16 +1,16 @@
 # python train_baseline.py --model_name resnet50 --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30 && \
-# python train_baseline.py --model_name vgg16_bn --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30 && \
+# python train_baseline.py --model_name vgg16 --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30 && \
 # python train_baseline.py --model_name densenet121 --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30  
-# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name resnet50 --pretrained False --epochs 2
-# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name vgg16 --pretrained False --epochs 2
-# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name densenet121 --pretrained False --epochs 2
+
+# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name resnet50  --epochs 2
+# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name vgg16  --epochs 2
+# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name densenet121  --epochs 2
 import os
-import re
 import time
 import torch
 import shutil
 import random
-import logging
+import logging 
 import datetime
 import argparse
 import numpy as np
@@ -81,10 +81,9 @@ def get_outlog(args):
     logger = utils.get_logger(
         level=logging.INFO,
         mode="w",
-        name=None,
+        name="train_baseline",
         logger_fp=os.path.join(logfile_dir, args.model_name + "_" + args.data_set + ".log"),
     )
-    logger = logging.getLogger("train_baseline")
     return tb_writer, logger
 
 
@@ -217,7 +216,7 @@ def _amp_context(args, device):
     return nullcontext()
 
 
-def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, args):
+def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, global_step, args):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f"Epoch: [{epoch}]"
@@ -247,6 +246,7 @@ def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, a
 
         # stats
         n_batches += 1
+        global_step += 1
         total_loss += float(loss.item())
         _, pred = torch.max(logits.data, 1)
         n_examples += labels.size(0)
@@ -257,16 +257,16 @@ def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, a
             tb_writer.add_scalars(
                 main_tag="train/loss",
                 tag_scalar_dict={"cls": float(loss.item())},
-                global_step=iteration + n_batches,
+                global_step=global_step,
             )
 
     acc = (n_correct / max(1, n_examples)) * 100.0
     avg_loss = total_loss / max(1, n_batches)
-    return acc, {"cross_entropy": avg_loss}
+    return acc, {"cross_entropy": avg_loss}, global_step
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, epoch, tb_writer, iteration, args):
+def evaluate(model, dataloader, epoch, tb_writer, global_step, args):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = f"Test: [{epoch}]"
@@ -285,6 +285,7 @@ def evaluate(model, dataloader, epoch, tb_writer, iteration, args):
             loss = torch.nn.functional.cross_entropy(logits, labels)
 
         n_batches += 1
+        global_step += 1
         total_loss += float(loss.item())
         _, pred = torch.max(logits.data, 1)
         n_examples += labels.size(0)
@@ -295,12 +296,12 @@ def evaluate(model, dataloader, epoch, tb_writer, iteration, args):
             tb_writer.add_scalars(
                 main_tag="test/loss",
                 tag_scalar_dict={"cls": float(loss.item())},
-                global_step=iteration + n_batches,
+                global_step=global_step,
             )
 
     acc = (n_correct / max(1, n_examples)) * 100.0
     avg_loss = total_loss / max(1, n_batches)
-    return acc, {"cross_entropy": avg_loss}
+    return acc, {"cross_entropy": avg_loss}, global_step
 
 
 def main():
@@ -500,21 +501,63 @@ def main():
     output_dir = Path(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
     # keep code snapshot for reproducibility
-    shutil.copy(src=os.path.join(os.getcwd(), __file__), dst=output_dir)
+    try:
+        shutil.copy(src=str(Path(__file__).resolve()), dst=str(output_dir))
+    except Exception:
+        pass
 
+    # resume / eval support
+    start_epoch = 0
     best_acc = 0.0
     best_epoch = -1
+    global_step = 0
+    if args.resume:
+        ckpt_path = Path(args.resume)
+        if not ckpt_path.is_file():
+            raise RuntimeError(f"--resume checkpoint not found: {ckpt_path}")
+        checkpoint = torch.load(str(ckpt_path), map_location="cpu")
+        if "model" in checkpoint:
+            model_without_ddp.load_state_dict(checkpoint["model"], strict=True)
+        else:
+            # allow resuming from raw state_dict
+            model_without_ddp.load_state_dict(checkpoint, strict=True)
+
+        if isinstance(checkpoint, dict):
+            if "optimizer" in checkpoint:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+            if "lr_scheduler" in checkpoint:
+                lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            if "scaler" in checkpoint and getattr(args, "_scaler", None) is not None:
+                args._scaler.load_state_dict(checkpoint["scaler"])
+            if "epoch" in checkpoint:
+                start_epoch = int(checkpoint["epoch"]) + 1
+            if "best_acc" in checkpoint:
+                best_acc = float(checkpoint["best_acc"])
+            if "best_epoch" in checkpoint:
+                best_epoch = int(checkpoint["best_epoch"])
+            if "global_step" in checkpoint:
+                global_step = int(checkpoint["global_step"])
+
+        logger.info(f"Resumed from {ckpt_path} (start_epoch={start_epoch}, global_step={global_step})")
+
     start_time = time.time()
-    iteration = 0
-    for epoch in range(args.epochs):
+
+    if args.eval:
+        test_acc, losses, global_step = evaluate(model, test_loader, epoch=0, tb_writer=tb_writer, global_step=global_step, args=args)
+        if utils.get_rank() == 0:
+            logger.info(f"[EVAL] Accuracy on {len(test_dataset)} test images: {test_acc:.2f}%")
+            logger.info(f"[EVAL] Avg cross-entropy loss: {losses['cross_entropy']:.6f}")
+        return
+
+    for epoch in range(start_epoch, args.epochs):
         if args.distributed and hasattr(sampler_train, "set_epoch"):
             sampler_train.set_epoch(epoch)
 
         if epoch >= args.warmup_epochs:
             lr_scheduler.step()
 
-        train_acc, _ = train_one_epoch(model, train_loader, optimizer, epoch, tb_writer, iteration, args)
-        test_acc, losses = evaluate(model, test_loader, epoch, tb_writer, iteration, args)
+        train_acc, _, global_step = train_one_epoch(model, train_loader, optimizer, epoch, tb_writer, global_step, args)
+        test_acc, losses, global_step = evaluate(model, test_loader, epoch, tb_writer, global_step, args)
         if utils.get_rank() == 0:
             tb_writer.add_scalar("epoch/val_acc1", test_acc, epoch)
             tb_writer.add_scalar("epoch/val_loss", losses["cross_entropy"], epoch)
@@ -528,9 +571,15 @@ def main():
             utils.save_on_master(
                 {
                     "model": model_without_ddp.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "lr_scheduler": lr_scheduler.state_dict(),
+                    "scaler": getattr(args, "_scaler", None).state_dict() if getattr(args, "_scaler", None) is not None else None,
                     "epoch": epoch,
                     "args": args,
                     "accuracy": float(test_acc),
+                    "best_acc": best_acc,
+                    "best_epoch": best_epoch,
+                    "global_step": global_step,
                 },
                 best_path,
             )
@@ -540,9 +589,15 @@ def main():
             utils.save_on_master(
                 {
                     "model": model_without_ddp.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "lr_scheduler": lr_scheduler.state_dict(),
+                    "scaler": getattr(args, "_scaler", None).state_dict() if getattr(args, "_scaler", None) is not None else None,
                     "epoch": epoch,
                     "args": args,
                     "accuracy": float(test_acc),
+                    "best_acc": best_acc,
+                    "best_epoch": best_epoch,
+                    "global_step": global_step,
                 },
                 final_path,
             )
