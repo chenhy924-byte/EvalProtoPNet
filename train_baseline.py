@@ -228,21 +228,20 @@ def _build_torchvision_model(model_name: str, num_classes: int, pretrained: bool
     raise ValueError(f"Unsupported --model_name: {model_name}")
 
 
-def _delete_torch_hub_checkpoint_from_url(url: str) -> None:
-    # torch.hub uses ~/.cache/torch/hub/checkpoints/<filename>
+def _delete_project_pretrained_checkpoint_from_url(url: str) -> None:
+    # Project-aligned pretrained weights are stored under ./pretrained_models/<filename>
     try:
         filename = os.path.basename(urlparse(url).path)
         if not filename:
             return
-        hub_dir = os.path.join(os.path.expanduser("~"), ".cache", "torch", "hub", "checkpoints")
-        ckpt_path = os.path.join(hub_dir, filename)
+        ckpt_path = os.path.join(_project_pretrained_dir(), filename)
         if os.path.exists(ckpt_path):
             os.remove(ckpt_path)
     except Exception:
         return
 
 
-def _torchvision_pretrained_weights_url(model_name: str) -> str:
+def _project_pretrained_weights_url(model_name: str) -> str:
     """
     Used only for deleting cached project-aligned pretrained weights on corrupted downloads.
     """
@@ -265,8 +264,8 @@ def build_model_with_retry(model_name: str, num_classes: int, pretrained: bool, 
             if any(k in msg for k in ["central directory", "unexpected eof", "file might be corrupted"]):
                 # delete cached weight and retry
                 if pretrained:
-                    url = _torchvision_pretrained_weights_url(model_name)
-                    _delete_torch_hub_checkpoint_from_url(url)
+                    url = _project_pretrained_weights_url(model_name)
+                    _delete_project_pretrained_checkpoint_from_url(url)
                 last_err = e
                 continue
             raise
