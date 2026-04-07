@@ -1,16 +1,18 @@
-# python train_baseline.py --model_name resnet50 --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30 && \
-# python train_baseline.py --model_name vgg16_bn --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30 && \
-# python train_baseline.py --model_name densenet121 --data_path /root/autodl-tmp/datasets/Barefoot_Dataset/ --epochs 30  
-# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name resnet50 --pretrained False --epochs 2
-# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name vgg16 --pretrained False --epochs 2
-# python train_baseline.py --data_path datasets/Barefoot_Dataset_2 --model_name densenet121 --pretrained False --epochs 2
+# python train_baseline.py --model_name resnet18 --data_path /root/autodl-fs/datasets/Barefoot_Dataset_200/ --epochs 30 && \
+# python train_baseline.py --model_name resnet50 --data_path /root/autodl-fs/datasets/Barefoot_Dataset_200/ --epochs 30 && \
+# python train_baseline.py --model_name vgg19 --data_path /root/autodl-fs/datasets/Barefoot_Dataset_200/ --epochs 30 && \
+# python train_baseline.py --model_name densenet121 --data_path /root/autodl-fs/datasets/Barefoot_Dataset_200/ --epochs 30  
+
+# python train_baseline.py --model_name resnet18 --data_path datasets/Barefoot_Dataset_2  --epochs 2
+# python train_baseline.py --model_name resnet50 --data_path datasets/Barefoot_Dataset_2  --epochs 2
+# python train_baseline.py --model_name vgg19 --data_path datasets/Barefoot_Dataset_2  --epochs 2
+# python train_baseline.py --model_name densenet121 --data_path datasets/Barefoot_Dataset_2  --epochs 2
 import os
-import re
 import time
 import torch
 import shutil
 import random
-import logging
+import logging 
 import datetime
 import argparse
 import numpy as np
@@ -25,6 +27,20 @@ from util.utils import str2bool
 from torch.utils.tensorboard import SummaryWriter
 from util.preprocess import mean, std
 from util.datasets import Barefoot_Dataset
+
+class _NullWriter:
+    def add_scalar(self, *args, **kwargs):
+        return
+
+    def add_scalars(self, *args, **kwargs):
+        return
+
+    def flush(self):
+        return
+
+    def close(self):
+        return
+
 
 def _barefoot_train_dir_and_nb_classes(data_path):
     train_dir = os.path.join(data_path, Barefoot_Dataset.TRAIN_DIR)
@@ -63,6 +79,18 @@ def set_seed(seed):
 
 
 def get_outlog(args):
+    is_master = utils.get_rank() == 0
+
+    if not is_master:
+        # Ensure metric logger does not spam logs in DDP.
+        logging.getLogger("MetricLogger").disabled = True
+
+        silent_logger = logging.getLogger("train_baseline.silent")
+        silent_logger.handlers = []
+        silent_logger.propagate = False
+        silent_logger.setLevel(logging.CRITICAL + 1)
+        return _NullWriter(), silent_logger
+
     if args.eval:
         logfile_dir = os.path.join(args.output_dir, "eval-logs")
     else:
@@ -74,6 +102,7 @@ def get_outlog(args):
     os.makedirs(ckpt_dir, exist_ok=True)
     os.makedirs(tb_dir, exist_ok=True)
     os.makedirs(tb_log_dir, exist_ok=True)
+
     tb_writer = SummaryWriter(
         log_dir=os.path.join(tb_dir, args.model_name + "_" + args.data_set),
         flush_secs=1,
@@ -81,10 +110,9 @@ def get_outlog(args):
     logger = utils.get_logger(
         level=logging.INFO,
         mode="w",
-        name=None,
+        name="train_baseline",
         logger_fp=os.path.join(logfile_dir, args.model_name + "_" + args.data_set + ".log"),
     )
-    logger = logging.getLogger("train_baseline")
     return tb_writer, logger
 
 
@@ -217,6 +245,27 @@ def _amp_context(args, device):
     return nullcontext()
 
 
+def _ddp_all_reduce_stats(n_examples: int, n_correct: int, total_loss: float, total_loss_weight: float, args):
+    """
+    Aggregate scalar stats across processes.
+
+    - `total_loss` should be a SUM (e.g., loss * batch_size accumulated)
+    - `total_loss_weight` is the corresponding normalizer (typically total_examples)
+    """
+    if not getattr(args, "distributed", False) or not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return n_examples, n_correct, total_loss, total_loss_weight
+
+    dev = args.device if hasattr(args, "device") else torch.device("cpu")
+    t = torch.tensor(
+        [float(n_examples), float(n_correct), float(total_loss), float(total_loss_weight)],
+        device=dev,
+        dtype=torch.float64,
+    )
+    torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
+    ne, nc, tl, tlw = t.tolist()
+    return int(round(ne)), int(round(nc)), float(tl), float(tlw)
+
+
 def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, args):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -226,7 +275,7 @@ def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, a
     scaler = getattr(args, "_scaler", None)
 
     n_examples, n_correct, n_batches = 0, 0, 0
-    total_loss = 0.0
+    total_loss = 0.0  # sum(loss * batch_size)
 
     for images, labels in metric_logger.log_every(dataloader, print_freq, header):
         images = images.to(dev, non_blocking=True)
@@ -247,22 +296,35 @@ def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, a
 
         # stats
         n_batches += 1
-        total_loss += float(loss.item())
+        iteration += 1
+        bs = int(labels.size(0))
+        total_loss += float(loss.item()) * bs
         _, pred = torch.max(logits.data, 1)
-        n_examples += labels.size(0)
+        n_examples += bs
         n_correct += (pred == labels).sum().item()
 
         metric_logger.update(loss=float(loss.item()))
-        if utils.get_rank() == 0:
-            tb_writer.add_scalars(
-                main_tag="train/loss",
-                tag_scalar_dict={"cls": float(loss.item())},
-                global_step=iteration + n_batches,
-            )
+
+    # DDP: compute global accuracy/loss
+    if getattr(args, "distributed", False):
+        n_examples, n_correct, total_loss, total_loss_weight = _ddp_all_reduce_stats(
+            n_examples=n_examples,
+            n_correct=n_correct,
+            total_loss=total_loss,
+            total_loss_weight=float(n_examples),
+            args=args,
+        )
+    else:
+        total_loss_weight = float(n_examples)
 
     acc = (n_correct / max(1, n_examples)) * 100.0
-    avg_loss = total_loss / max(1, n_batches)
-    return acc, {"cross_entropy": avg_loss}
+    avg_loss = total_loss / max(1.0, total_loss_weight)
+
+    if tb_writer is not None and utils.get_rank() == 0:
+        tb_writer.add_scalar("train/acc1", float(acc), iteration)
+        tb_writer.add_scalar("train/loss", float(avg_loss), iteration)
+
+    return acc, {"cross_entropy": avg_loss}, iteration
 
 
 @torch.no_grad()
@@ -274,7 +336,7 @@ def evaluate(model, dataloader, epoch, tb_writer, iteration, args):
     dev = args.device
 
     n_examples, n_correct, n_batches = 0, 0, 0
-    total_loss = 0.0
+    total_loss = 0.0  # sum(loss * batch_size)
 
     for images, labels in metric_logger.log_every(dataloader, print_freq, header):
         images = images.to(dev, non_blocking=True)
@@ -285,22 +347,35 @@ def evaluate(model, dataloader, epoch, tb_writer, iteration, args):
             loss = torch.nn.functional.cross_entropy(logits, labels)
 
         n_batches += 1
-        total_loss += float(loss.item())
+        iteration += 1
+        bs = int(labels.size(0))
+        total_loss += float(loss.item()) * bs
         _, pred = torch.max(logits.data, 1)
-        n_examples += labels.size(0)
+        n_examples += bs
         n_correct += (pred == labels).sum().item()
 
         metric_logger.update(loss=float(loss.item()))
-        if utils.get_rank() == 0:
-            tb_writer.add_scalars(
-                main_tag="test/loss",
-                tag_scalar_dict={"cls": float(loss.item())},
-                global_step=iteration + n_batches,
-            )
+
+    # Only aggregate in distributed evaluation mode; otherwise each rank is already evaluating the full set.
+    if getattr(args, "distributed", False) and getattr(args, "dist_eval", False):
+        n_examples, n_correct, total_loss, total_loss_weight = _ddp_all_reduce_stats(
+            n_examples=n_examples,
+            n_correct=n_correct,
+            total_loss=total_loss,
+            total_loss_weight=float(n_examples),
+            args=args,
+        )
+    else:
+        total_loss_weight = float(n_examples)
 
     acc = (n_correct / max(1, n_examples)) * 100.0
-    avg_loss = total_loss / max(1, n_batches)
-    return acc, {"cross_entropy": avg_loss}
+    avg_loss = total_loss / max(1.0, total_loss_weight)
+
+    if tb_writer is not None and utils.get_rank() == 0:
+        tb_writer.add_scalar("test/acc1", float(acc), iteration)
+        tb_writer.add_scalar("test/loss", float(avg_loss), iteration)
+
+    return acc, {"cross_entropy": avg_loss}, iteration
 
 
 def main():
@@ -425,11 +500,12 @@ def main():
         args._scaler = torch.cuda.amp.GradScaler()
 
     tb_writer, logger = get_outlog(args)
-    logger.info(
-        f"Baseline={args.model_name}, classes={args.nb_classes}, "
-        f"AMP enabled={args.use_amp}, dtype={args.amp_dtype}, "
-        f"use_bf16={args.use_bf16}, device={args.device}"
-    )
+    if utils.get_rank() == 0:
+        logger.info(
+            f"Baseline={args.model_name}, classes={args.nb_classes}, "
+            f"AMP enabled={args.use_amp}, dtype={args.amp_dtype}, "
+            f"use_bf16={args.use_bf16}, device={args.device}, dist_eval={args.dist_eval}"
+        )
 
     # transforms & datasets (reuse same preprocessing as main.py)
     normalize = transforms.Normalize(mean=mean, std=std)
@@ -456,7 +532,12 @@ def main():
         sampler_train = torch.utils.data.DistributedSampler(
             train_dataset, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
-        sampler_val = torch.utils.data.SequentialSampler(test_dataset)
+        if args.dist_eval:
+            sampler_val = torch.utils.data.DistributedSampler(
+                test_dataset, num_replicas=num_tasks, rank=global_rank, shuffle=False
+            )
+        else:
+            sampler_val = torch.utils.data.SequentialSampler(test_dataset)
     else:
         sampler_train = torch.utils.data.RandomSampler(train_dataset)
         sampler_val = torch.utils.data.SequentialSampler(test_dataset)
@@ -483,7 +564,8 @@ def main():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
         model_without_ddp = model.module
     elif device.type == "cuda" and cuda_count >= 2:
-        logger.info(f"Multiple GPUs detected (count={cuda_count}) but not launched via torchrun; using DataParallel.")
+        if utils.get_rank() == 0:
+            logger.info(f"Multiple GPUs detected (count={cuda_count}) but not launched via torchrun; using DataParallel.")
         model = torch.nn.DataParallel(model)
         model_without_ddp = model.module
 
@@ -498,27 +580,88 @@ def main():
     )
 
     output_dir = Path(args.output_dir)
-    os.makedirs(output_dir, exist_ok=True)
-    # keep code snapshot for reproducibility
-    shutil.copy(src=os.path.join(os.getcwd(), __file__), dst=output_dir)
+    if utils.get_rank() == 0:
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(output_dir / "checkpoints", exist_ok=True)
+        # keep code snapshot for reproducibility
+        try:
+            shutil.copy(src=str(Path(__file__).resolve()), dst=str(output_dir))
+        except Exception:
+            pass
 
+    # resume / eval support
+    start_epoch = 0
     best_acc = 0.0
     best_epoch = -1
-    start_time = time.time()
     iteration = 0
-    for epoch in range(args.epochs):
+    if args.resume:
+        ckpt_path = Path(args.resume)
+        if not ckpt_path.is_file():
+            raise RuntimeError(f"--resume checkpoint not found: {ckpt_path}")
+        checkpoint = torch.load(str(ckpt_path), map_location="cpu")
+        if "model" in checkpoint:
+            model_without_ddp.load_state_dict(checkpoint["model"], strict=True)
+        else:
+            # allow resuming from raw state_dict
+            model_without_ddp.load_state_dict(checkpoint, strict=True)
+
+        if isinstance(checkpoint, dict):
+            if "optimizer" in checkpoint:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+            if "lr_scheduler" in checkpoint:
+                lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            if "scaler" in checkpoint and checkpoint["scaler"] is not None and getattr(args, "_scaler", None) is not None:
+                args._scaler.load_state_dict(checkpoint["scaler"])
+            if "epoch" in checkpoint:
+                start_epoch = int(checkpoint["epoch"]) + 1
+            if "best_acc" in checkpoint:
+                best_acc = float(checkpoint["best_acc"])
+            if "best_epoch" in checkpoint:
+                best_epoch = int(checkpoint["best_epoch"])
+            if "iteration" in checkpoint:
+                iteration = int(checkpoint["iteration"])
+
+        if utils.get_rank() == 0:
+            logger.info(f"Resumed from {ckpt_path} (start_epoch={start_epoch}, iteration={iteration})")
+
+    start_time = time.time()
+
+    if args.eval:
+        test_acc, losses, iteration = evaluate(
+            model, test_loader, epoch=0, tb_writer=tb_writer, iteration=iteration, args=args
+        )
+        if utils.get_rank() == 0:
+            logger.info(f"[EVAL] Accuracy on {len(test_dataset)} test images: {test_acc:.2f}%")
+            logger.info(f"[EVAL] Avg cross-entropy loss: {losses['cross_entropy']:.6f}")
+        tb_writer.close()
+        return
+
+    for epoch in range(start_epoch, args.epochs):
         if args.distributed and hasattr(sampler_train, "set_epoch"):
             sampler_train.set_epoch(epoch)
+
+        train_acc, train_losses, iteration = train_one_epoch(
+            model, train_loader, optimizer, epoch, tb_writer, iteration, args
+        )
+        test_acc, val_losses, iteration = evaluate(
+            model, test_loader, epoch, tb_writer, iteration, args
+        )
 
         if epoch >= args.warmup_epochs:
             lr_scheduler.step()
 
-        train_acc, _ = train_one_epoch(model, train_loader, optimizer, epoch, tb_writer, iteration, args)
-        test_acc, losses = evaluate(model, test_loader, epoch, tb_writer, iteration, args)
+        if utils.get_rank() == 0 and tb_writer is not None:
+            tb_writer.add_scalar("epoch/train_acc1", float(train_acc), epoch)
+            tb_writer.add_scalar("epoch/train_loss", float(train_losses["cross_entropy"]), epoch)
+            tb_writer.add_scalar("epoch/val_acc1", float(test_acc), epoch)
+            tb_writer.add_scalar("epoch/val_loss", float(val_losses["cross_entropy"]), epoch)
+
         if utils.get_rank() == 0:
-            tb_writer.add_scalar("epoch/val_acc1", test_acc, epoch)
-            tb_writer.add_scalar("epoch/val_loss", losses["cross_entropy"], epoch)
-            logger.info(f"Accuracy on {len(test_dataset)} test images: {test_acc:.2f}%")
+            logger.info(
+                f"Epoch {epoch}: "
+                f"Train Acc={train_acc:.2f}% | Train Loss={train_losses['cross_entropy']:.6f} | "
+                f"Val Acc={test_acc:.2f}% | Val Loss={val_losses['cross_entropy']:.6f}"
+            )
 
         # checkpoints: best + final (per model_name)
         if test_acc >= best_acc and utils.get_rank() == 0:
@@ -528,9 +671,15 @@ def main():
             utils.save_on_master(
                 {
                     "model": model_without_ddp.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "lr_scheduler": lr_scheduler.state_dict(),
+                    "scaler": getattr(args, "_scaler", None).state_dict() if getattr(args, "_scaler", None) is not None else None,
                     "epoch": epoch,
                     "args": args,
                     "accuracy": float(test_acc),
+                    "best_acc": best_acc,
+                    "best_epoch": best_epoch,
+                    "iteration": iteration,
                 },
                 best_path,
             )
@@ -540,17 +689,24 @@ def main():
             utils.save_on_master(
                 {
                     "model": model_without_ddp.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "lr_scheduler": lr_scheduler.state_dict(),
+                    "scaler": getattr(args, "_scaler", None).state_dict() if getattr(args, "_scaler", None) is not None else None,
                     "epoch": epoch,
                     "args": args,
                     "accuracy": float(test_acc),
+                    "best_acc": best_acc,
+                    "best_epoch": best_epoch,
+                    "iteration": iteration,
                 },
                 final_path,
             )
 
-    total_time = time.time() - start_time
-    logger.info("Training time {}".format(str(datetime.timedelta(seconds=int(total_time)))))
     if utils.get_rank() == 0:
+        total_time = time.time() - start_time
+        logger.info("Training time {}".format(str(datetime.timedelta(seconds=int(total_time)))))
         logger.info(f"Max accuracy: {best_acc:.2f}% (epoch={best_epoch})")
+    tb_writer.close()
 
 
 if __name__ == "__main__":
@@ -558,4 +714,3 @@ if __name__ == "__main__":
 
     multiprocessing.freeze_support()
     main()
-
