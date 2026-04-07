@@ -114,6 +114,12 @@ def get_outlog(args):
         name="train_baseline",
         logger_fp=os.path.join(logfile_dir, args.model_name + "_" + args.data_set + ".log"),
     )
+    metric_logger = logging.getLogger("MetricLogger")
+    metric_logger.handlers = []
+    metric_logger.setLevel(logging.INFO)
+    metric_logger.propagate = False
+    for handler in logger.handlers:
+        metric_logger.addHandler(handler)
     return tb_writer, logger
 
 
@@ -307,6 +313,10 @@ def _ddp_all_reduce_stats(n_examples: int, n_correct: int, total_loss: float, to
     torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
     ne, nc, tl, tlw = t.tolist()
     return int(round(ne)), int(round(nc)), float(tl), float(tlw)
+
+
+def _current_lr(optimizer: torch.optim.Optimizer) -> float:
+    return float(optimizer.param_groups[0]["lr"])
 
 
 def train_one_epoch(model, dataloader, optimizer, epoch, tb_writer, iteration, args):
@@ -670,6 +680,11 @@ def main():
     start_time = time.time()
 
     if args.eval:
+        if utils.get_rank() == 0:
+            logger.info("=" * 72)
+            logger.info("Evaluation Only")
+            logger.info(f"Model={args.model_name} | Classes={args.nb_classes} | Test Samples={len(test_dataset)}")
+            logger.info("=" * 72)
         test_acc, losses, iteration = evaluate(
             model, test_loader, epoch=0, tb_writer=tb_writer, iteration=iteration, args=args
         )
@@ -679,9 +694,30 @@ def main():
         tb_writer.close()
         return
 
+    if utils.get_rank() == 0:
+        logger.info("=" * 72)
+        logger.info(f"Start training for {args.epochs - start_epoch} epochs")
+        logger.info(
+            f"Model={args.model_name} | Classes={args.nb_classes} | "
+            f"Pretrained={args.pretrained} | LR={args.lr:.6g} | "
+            f"Batch(train/test)={args.train_batch_size}/{args.test_batch_size}"
+        )
+        logger.info(
+            f"Train Samples={len(train_dataset)} | Test Samples={len(test_dataset)} | "
+            f"Input Size={args.input_size} | Warmup Epochs={args.warmup_epochs}"
+        )
+        logger.info("=" * 72)
+
     for epoch in range(start_epoch, args.epochs):
         if args.distributed and hasattr(sampler_train, "set_epoch"):
             sampler_train.set_epoch(epoch)
+
+        epoch_start_time = time.time()
+        if utils.get_rank() == 0:
+            logger.info("-" * 72)
+            logger.info(f"Epoch {epoch + 1}/{args.epochs}")
+            logger.info(f"LR={_current_lr(optimizer):.6g}")
+            logger.info("-" * 72)
 
         train_acc, train_losses, iteration = train_one_epoch(
             model, train_loader, optimizer, epoch, tb_writer, iteration, args
@@ -726,6 +762,7 @@ def main():
                 },
                 best_path,
             )
+            logger.info(f"Updated best checkpoint: {best_path} (acc={best_acc:.2f}%)")
 
         if epoch == args.epochs - 1 and utils.get_rank() == 0:
             final_path = output_dir / f"checkpoints/final_{args.model_name}.pth"
@@ -744,9 +781,18 @@ def main():
                 },
                 final_path,
             )
+            logger.info(f"Saved final checkpoint: {final_path}")
+
+        if utils.get_rank() == 0:
+            epoch_time = time.time() - epoch_start_time
+            logger.info(
+                f"Epoch {epoch + 1} done in {str(datetime.timedelta(seconds=int(epoch_time)))} | "
+                f"Best Acc So Far={best_acc:.2f}% (epoch={best_epoch})"
+            )
 
     if utils.get_rank() == 0:
         total_time = time.time() - start_time
+        logger.info("=" * 72)
         logger.info("Training time {}".format(str(datetime.timedelta(seconds=int(total_time)))))
         logger.info(f"Max accuracy: {best_acc:.2f}% (epoch={best_epoch})")
     tb_writer.close()
