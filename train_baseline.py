@@ -21,6 +21,7 @@ import torchvision.models as tv_models
 from pathlib import Path
 from contextlib import nullcontext
 from urllib.parse import urlparse
+import torch.utils.model_zoo as model_zoo
 
 import util.utils as utils
 from util.utils import str2bool
@@ -116,53 +117,112 @@ def get_outlog(args):
     return tb_writer, logger
 
 
+_PROJECT_PRETRAIN_MODEL_URLS = {
+    "resnet18": "https://download.pytorch.org/models/resnet18-5c106cde.pth",
+    "resnet34": "https://download.pytorch.org/models/resnet34-333f7ec4.pth",
+    "resnet50": "https://download.pytorch.org/models/resnet50-19c8e357.pth",
+    "resnet101": "https://download.pytorch.org/models/resnet101-5d3b4d8f.pth",
+    "resnet152": "https://download.pytorch.org/models/resnet152-b121ed2d.pth",
+    "vgg16": "https://download.pytorch.org/models/vgg16-397923af.pth",
+    "vgg19": "https://download.pytorch.org/models/vgg19-dcbb9e9d.pth",
+    "densenet121": "https://download.pytorch.org/models/densenet121-a639ec97.pth",
+    "densenet161": "https://download.pytorch.org/models/densenet161-8d451a50.pth",
+}
+
+
+def _project_pretrained_dir() -> str:
+    return str((Path(__file__).resolve().parent / "pretrained_models").resolve())
+
+
+def _load_project_pretrained_state_dict(model_name: str):
+    model_name = model_name.lower()
+    if model_name not in _PROJECT_PRETRAIN_MODEL_URLS:
+        raise ValueError(f"Unsupported --model_name for project pretrained weights: {model_name}")
+    return model_zoo.load_url(_PROJECT_PRETRAIN_MODEL_URLS[model_name], model_dir=_project_pretrained_dir())
+
+
+def _load_project_pretrained_backbone(model: torch.nn.Module, model_name: str) -> None:
+    model_name = model_name.lower()
+    state_dict = _load_project_pretrained_state_dict(model_name)
+
+    if model_name.startswith("resnet"):
+        state_dict.pop("fc.weight", None)
+        state_dict.pop("fc.bias", None)
+        model.load_state_dict(state_dict, strict=False)
+        return
+
+    if model_name.startswith("vgg"):
+        state_dict = {k: v for k, v in state_dict.items() if not k.startswith("classifier.")}
+        model.load_state_dict(state_dict, strict=False)
+        return
+
+    if model_name.startswith("densenet"):
+        state_dict.pop("classifier.weight", None)
+        state_dict.pop("classifier.bias", None)
+        model.load_state_dict(state_dict, strict=False)
+        return
+
+    raise ValueError(f"Unsupported --model_name for project pretrained loading: {model_name}")
+
+
 def _build_torchvision_model(model_name: str, num_classes: int, pretrained: bool = True) -> torch.nn.Module:
     model_name = model_name.lower()
     # Keep backbone forward compatible with different model families.
     # Only the final classification layer is replaced to match `num_classes`.
+    # For fair baseline comparison, reuse the project's historical pretrained
+    # weight versions under `pretrained_models/` instead of newer torchvision defaults.
     if model_name == "resnet18":
-        weights = tv_models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.resnet18(weights=weights)
+        m = tv_models.resnet18(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
         return m
     if model_name == "resnet34":
-        weights = tv_models.ResNet34_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.resnet34(weights=weights)
+        m = tv_models.resnet34(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
         return m
     if model_name == "resnet50":
-        weights = tv_models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.resnet50(weights=weights)
+        m = tv_models.resnet50(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
         return m
     if model_name == "resnet101":
-        weights = tv_models.ResNet101_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.resnet101(weights=weights)
+        m = tv_models.resnet101(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
         return m
     if model_name == "resnet152":
-        weights = tv_models.ResNet152_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.resnet152(weights=weights)
+        m = tv_models.resnet152(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.fc = torch.nn.Linear(m.fc.in_features, num_classes)
         return m
     if model_name == "vgg16":
-        weights = tv_models.VGG16_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.vgg16(weights=weights)
+        m = tv_models.vgg16(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.classifier[-1] = torch.nn.Linear(m.classifier[-1].in_features, num_classes)
         return m
     if model_name == "vgg19":
-        weights = tv_models.VGG19_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.vgg19(weights=weights)
+        m = tv_models.vgg19(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.classifier[-1] = torch.nn.Linear(m.classifier[-1].in_features, num_classes)
         return m
     if model_name == "densenet121":
-        weights = tv_models.DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.densenet121(weights=weights)
+        m = tv_models.densenet121(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.classifier = torch.nn.Linear(m.classifier.in_features, num_classes)
         return m
     if model_name == "densenet161":
-        weights = tv_models.DenseNet161_Weights.IMAGENET1K_V1 if pretrained else None
-        m = tv_models.densenet161(weights=weights)
+        m = tv_models.densenet161(weights=None)
+        if pretrained:
+            _load_project_pretrained_backbone(m, model_name)
         m.classifier = torch.nn.Linear(m.classifier.in_features, num_classes)
         return m
     raise ValueError(f"Unsupported --model_name: {model_name}")
@@ -184,27 +244,11 @@ def _delete_torch_hub_checkpoint_from_url(url: str) -> None:
 
 def _torchvision_pretrained_weights_url(model_name: str) -> str:
     """
-    Used only for deleting cached pretrained weights on corrupted downloads.
+    Used only for deleting cached project-aligned pretrained weights on corrupted downloads.
     """
     mn = model_name.lower()
-    if mn == "resnet18":
-        return tv_models.ResNet18_Weights.IMAGENET1K_V1.url
-    if mn == "resnet34":
-        return tv_models.ResNet34_Weights.IMAGENET1K_V1.url
-    if mn == "resnet50":
-        return tv_models.ResNet50_Weights.IMAGENET1K_V1.url
-    if mn == "resnet101":
-        return tv_models.ResNet101_Weights.IMAGENET1K_V1.url
-    if mn == "resnet152":
-        return tv_models.ResNet152_Weights.IMAGENET1K_V1.url
-    if mn == "vgg16":
-        return tv_models.VGG16_Weights.IMAGENET1K_V1.url
-    if mn == "vgg19":
-        return tv_models.VGG19_Weights.IMAGENET1K_V1.url
-    if mn == "densenet121":
-        return tv_models.DenseNet121_Weights.IMAGENET1K_V1.url
-    if mn == "densenet161":
-        return tv_models.DenseNet161_Weights.IMAGENET1K_V1.url
+    if mn in _PROJECT_PRETRAIN_MODEL_URLS:
+        return _PROJECT_PRETRAIN_MODEL_URLS[mn]
     raise ValueError(f"Unsupported --model_name for pretrained weights: {model_name}")
 
 
