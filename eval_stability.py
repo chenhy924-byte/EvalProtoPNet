@@ -43,6 +43,7 @@ def main():
     parser.add_argument('--prototype_shape', nargs='+', type=int, default=[2000, 64, 1, 1])
     parser.add_argument('--prototype_activation_function', type=str, default='log')
     parser.add_argument('--add_on_layers_type', type=str, default='regular')
+    parser.add_argument('--use_sa', type=bool, default=True, help='Must match training setting for SA ablations')
 
     parser.add_argument('--resume', type=str)
     args = parser.parse_args()
@@ -57,6 +58,8 @@ def main():
     checkpoint = None
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
+        if 'args' in checkpoint and hasattr(checkpoint['args'], 'use_sa'):
+            args.use_sa = bool(getattr(checkpoint['args'], 'use_sa'))
         ckpt_num_proto = int(checkpoint['model']['prototype_vectors'].shape[0])
         args.prototype_shape[0] = ckpt_num_proto
         if ckpt_num_proto % args.num_prototypes_per_class == 0:
@@ -77,7 +80,8 @@ def main():
                                   prototype_shape=args.prototype_shape,
                                   num_classes=args.nb_classes,
                                   prototype_activation_function=args.prototype_activation_function,
-                                  add_on_layers_type=args.add_on_layers_type)
+                                  add_on_layers_type=args.add_on_layers_type,
+                                  use_sa=bool(args.use_sa))
     ppnet = ppnet.to(device)
     ppnet_multi = torch.nn.DataParallel(ppnet)
 

@@ -29,7 +29,8 @@ class OursNet(nn.Module):
     def __init__(self, features, img_size, prototype_shape,
                  num_classes, init_weights=True,
                  prototype_activation_function='log',
-                 add_on_layers_type='bottleneck'):
+                 add_on_layers_type='bottleneck',
+                 use_sa: bool = True):
 
         super(OursNet, self).__init__()
         self.img_size = img_size
@@ -99,6 +100,10 @@ class OursNet(nn.Module):
 
         self.activation_weight = nn.Parameter(torch.ones(self.num_prototypes),
                                             requires_grad=True)
+
+        # Ablation switch: when False, logits become simple per-class sum of prototype activations
+        # (i.e., SA degenerates to uniform weights).
+        self.use_sa = bool(use_sa)
 
         if init_weights:
             self._initialize_weights()
@@ -213,7 +218,7 @@ class OursNet(nn.Module):
         cosine_min_distances = self.global_min_pooling(cosine_distances)
 
         prototype_activations = self.global_max_pooling(project_activations)
-        logits = self.forward_SA_module(prototype_activations)
+        logits = self.logits_from_prototype_activations(prototype_activations)
 
         fea_size = project_activations.shape[-1]
         project_activations = project_activations.flatten(start_dim=2)
@@ -226,6 +231,13 @@ class OursNet(nn.Module):
         deep_feas = all_feas[-1].flatten(start_dim=2)
 
         return logits, (cosine_min_distances, project_activations, shallow_feas, deep_feas)
+
+    def logits_from_prototype_activations(self, prototype_activations: torch.Tensor) -> torch.Tensor:
+        if self.use_sa:
+            return self.forward_SA_module(prototype_activations)
+        # No-SA ablation: simple per-class sum (equivalent to uniform weights of 1).
+        logits = prototype_activations.reshape(-1, self.num_classes, self.num_prototypes_per_class).sum(dim=-1)
+        return logits
 
     def forward_SA_module(self, prototype_activations):
         activation_weight = self.activation_weight.reshape(self.num_classes, -1)
@@ -258,7 +270,8 @@ class OursNet(nn.Module):
 def construct_OursNet(base_architecture, pretrained=True, img_size=224,
                     prototype_shape=(2000, 128, 1, 1), num_classes=200,
                     prototype_activation_function='log',
-                    add_on_layers_type='bottleneck'):
+                    add_on_layers_type='bottleneck',
+                    use_sa: bool = True):
     features = base_architecture_to_features[base_architecture](pretrained=pretrained)
 
     return OursNet(features=features,
@@ -267,4 +280,5 @@ def construct_OursNet(base_architecture, pretrained=True, img_size=224,
                  num_classes=num_classes,
                  init_weights=True,
                  prototype_activation_function=prototype_activation_function,
-                 add_on_layers_type=add_on_layers_type)
+                 add_on_layers_type=add_on_layers_type,
+                 use_sa=use_sa)

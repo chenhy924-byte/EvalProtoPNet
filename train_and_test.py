@@ -56,9 +56,21 @@ def _train_or_test(model, epoch, dataloader, tb_writer, iteration, optimizer=Non
                 # Seq loss
                 separation_cost = model_without_ddp.get_sep_loss(min_distances, label)
                 # Ortho loss
-                ortho_cost = model_without_ddp.get_ortho_loss()
+                if coefs is not None and float(coefs.get('orth', 0.0)) != 0.0:
+                    ortho_cost = model_without_ddp.get_ortho_loss()
+                else:
+                    ortho_cost = torch.zeros((), device=target.device, dtype=cross_entropy.dtype)
                 # Consis loss
-                consis_cost = model_without_ddp.get_SDFA_loss(proto_acts, shallow_feas, deep_feas, target, consis_thresh=args.consis_thresh)
+                if (
+                    coefs is not None
+                    and float(coefs.get('consis', 0.0)) != 0.0
+                    and (epoch >= args.warmup_epochs)
+                ):
+                    consis_cost = model_without_ddp.get_SDFA_loss(
+                        proto_acts, shallow_feas, deep_feas, target, consis_thresh=args.consis_thresh
+                    )
+                else:
+                    consis_cost = torch.zeros((), device=target.device, dtype=cross_entropy.dtype)
 
                 # evaluation statistics
                 _, predicted = torch.max(output.data, 1)
@@ -147,7 +159,8 @@ def warm_only(model):
         p.requires_grad = False
     for p in model.add_on_layers.parameters():
         p.requires_grad = True
-    model.activation_weight.requires_grad = True
+    # Respect ablation: do not force-enable SA weights if SA is disabled.
+    model.activation_weight.requires_grad = bool(getattr(model, 'use_sa', True))
     model.prototype_vectors.requires_grad = True
 
 
@@ -158,5 +171,6 @@ def joint(model):
         p.requires_grad = True
     for p in model.add_on_layers.parameters():
         p.requires_grad = True
-    model.activation_weight.requires_grad = True
+    # Respect ablation: do not force-enable SA weights if SA is disabled.
+    model.activation_weight.requires_grad = bool(getattr(model, 'use_sa', True))
     model.prototype_vectors.requires_grad = True

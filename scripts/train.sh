@@ -10,6 +10,16 @@ num_gpus="${2:-}"
 data_path="${3:-datasets/Barefoot_Dataset}"
 output_root="${4:-output_cosine}"
 
+conda_env="${CONDA_ENV:-}"
+
+# Preferred python/torchrun binaries (optional).
+# Fixes the common Windows issue: "conda activated in PowerShell, but `sh` uses another python without torch".
+# After you activate your env once, set in the SAME terminal:
+#   PowerShell: $env:PYTHON_BIN = (Get-Command python).Source
+#   bash:       export PYTHON_BIN="$(command -v python)"
+py_bin="${PYTHON_BIN:-python}"
+torchrun_bin="${TORCHRUN_BIN:-torchrun}"
+
 if [[ -z "$model" || -z "$num_gpus" ]]; then
   echo "Usage: sh scripts/train.sh <model> <num_gpus> [data_path] [output_root]"
   echo "  - model: resnet34|resnet152|vgg19|densenet121|densenet161|resnet18|resnet50|resnet101|vgg16|..."
@@ -46,20 +56,19 @@ if [[ "$num_classes" -eq 0 ]]; then
   exit 1
 fi
 
-
-train_batch_size=64
-test_batch_size=128
+train_batch_size="${TRAIN_BS:-64}"
+test_batch_size="${TEST_BS:-128}"
 
 # Paper-aligned defaults (shared across backbones in the paper's settings)
 seed=1028
 opt=adam
 lr=1e-4
 
-warmup_epochs=5
+warmup_epochs="${WARMUP_EPOCHS:-5}"
 decay_epochs=3
 decay_rate=0.2
 sched=step
-epochs=30
+epochs="${EPOCHS:-30}"
 input_size=224
 dim=64
 
@@ -75,11 +84,27 @@ consis_coe=0.50
 consis_thresh=0.10
 num_prototypes_per_class=10
 
+# Ablation switches (can be overridden by env vars for scripting)
+# Example: USE_SA=False USE_SDFA=True sh scripts/train.sh resnet34 0
+use_sa="${USE_SA:-True}"
+use_sdfa="${USE_SDFA:-True}"
+
 ft=train
 # One folder per run: <N>p_<base_architecture>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train
 date_part="$(date '+%Y%m%d')"
 time_part="$(date '+%H%M%S')"
-run_name="${num_classes}p_${model}_${date_part}_${time_part}_${seed}_${lr}_${opt}_${epochs}_${ft}"
+
+# Keep naming identical for default full model; only append suffix when ablation switches deviate.
+to01() { [[ "${1}" == "True" || "${1}" == "true" || "${1}" == "1" ]] && echo 1 || echo 0; }
+sa01="$(to01 "${use_sa}")"
+sdfa01="$(to01 "${use_sdfa}")"
+orth01="$(to01 "${use_ortho_loss}")"
+abl_suffix=""
+if [[ "${sa01}" -ne 1 || "${sdfa01}" -ne 1 || "${orth01}" -ne 1 ]]; then
+  abl_suffix="_abl_sa${sa01}_sdfa${sdfa01}_orth${orth01}"
+fi
+
+run_name="${num_classes}p_${model}_${date_part}_${time_part}_${seed}_${lr}_${opt}_${epochs}_${ft}${abl_suffix}"
 output_dir="${output_root}/${run_name}"
 
 common_args=(
@@ -96,6 +121,8 @@ common_args=(
   --add_on_layers_type=regular
   --use_ortho_loss="$use_ortho_loss"
   --ortho_coe="$ortho_coe"
+  --use_sa="$use_sa"
+  --use_sdfa="$use_sdfa"
   --consis_coe="$consis_coe"
   --consis_thresh="$consis_thresh"
   --opt="$opt"
@@ -113,11 +140,19 @@ common_args=(
 
 if [[ "$num_gpus" -eq 0 ]]; then
   echo ">>> num_gpus=0: CPU single-process"
-  python main.py --device cpu "${common_args[@]}"
+  if [[ -n "${conda_env}" ]]; then
+    conda run -n "${conda_env}" "${py_bin}" main.py --device cpu "${common_args[@]}"
+  else
+    "${py_bin}" main.py --device cpu "${common_args[@]}"
+  fi
 elif [[ "$num_gpus" -eq 1 ]]; then
   echo ">>> num_gpus=1: single-GPU single-process"
   export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
-  python main.py --device cuda "${common_args[@]}"
+  if [[ -n "${conda_env}" ]]; then
+    conda run -n "${conda_env}" "${py_bin}" main.py --device cuda "${common_args[@]}"
+  else
+    "${py_bin}" main.py --device cuda "${common_args[@]}"
+  fi
 else
   echo ">>> num_gpus=${num_gpus}: multi-GPU DDP (paper logic)"
   if [[ -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
@@ -125,9 +160,17 @@ else
     CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((num_gpus-1)))"
     export CUDA_VISIBLE_DEVICES
   fi
-  if command -v torchrun >/dev/null 2>&1; then
-    torchrun --nproc_per_node="$num_gpus" --master_port="$use_port" main.py "${common_args[@]}"
+  if command -v "${torchrun_bin}" >/dev/null 2>&1; then
+    if [[ -n "${conda_env}" ]]; then
+      conda run -n "${conda_env}" "${torchrun_bin}" --nproc_per_node="$num_gpus" --master_port="$use_port" main.py "${common_args[@]}"
+    else
+      "${torchrun_bin}" --nproc_per_node="$num_gpus" --master_port="$use_port" main.py "${common_args[@]}"
+    fi
   else
-    python -m torch.distributed.launch --nproc_per_node="$num_gpus" --master_port="$use_port" --use_env main.py "${common_args[@]}"
+    if [[ -n "${conda_env}" ]]; then
+      conda run -n "${conda_env}" "${py_bin}" -m torch.distributed.launch --nproc_per_node="$num_gpus" --master_port="$use_port" --use_env main.py "${common_args[@]}"
+    else
+      "${py_bin}" -m torch.distributed.launch --nproc_per_node="$num_gpus" --master_port="$use_port" --use_env main.py "${common_args[@]}"
+    fi
   fi
 fi

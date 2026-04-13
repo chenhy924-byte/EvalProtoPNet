@@ -121,6 +121,8 @@ parser.add_argument('--prototype_activation_function', type=str, default='log')
 parser.add_argument('--add_on_layers_type', type=str, default='regular')
 
 # Loss
+parser.add_argument('--use_sa', type=str2bool, default=True, help='Enable SA module (learnable prototype weighting). False = plain per-class sum.')
+parser.add_argument('--use_sdfa', type=str2bool, default=True, help='Enable SDFA consistency loss during training (after warmup).')
 parser.add_argument('--use_ortho_loss', type=str2bool, default=True)
 parser.add_argument('--ortho_coe', type=float, default=1e-4)
 parser.add_argument('--consis_coe', type=float, default=0.30)
@@ -252,12 +254,16 @@ if __name__ == '__main__':
     warm_optimizer_lrs = {'add_on_layers': args.add_on_layers_lr,
                         'prototype_vectors': args.prototype_vectors_lr,
                         'activation_weight': args.activation_weight_lr}
+    # Respect ablation: if SA disabled, do not train activation_weight.
+    if not bool(args.use_sa):
+        joint_optimizer_lrs['activation_weight'] = 0.0
+        warm_optimizer_lrs['activation_weight'] = 0.0
     coefs = {
         'crs_ent': 1,
-        'orth': 1e-4,
+        'orth': float(args.ortho_coe) if bool(args.use_ortho_loss) else 0.0,
         'clst': 0.8,
         'sep': -0.08,
-        'consis': args.consis_coe,
+        'consis': float(args.consis_coe) if bool(args.use_sdfa) else 0.0,
     }
 
     normalize = transforms.Normalize(mean=mean, std=std)
@@ -319,7 +325,8 @@ if __name__ == '__main__':
                                   prototype_shape=args.prototype_shape,
                                   num_classes=args.nb_classes,
                                   prototype_activation_function=args.prototype_activation_function,
-                                  add_on_layers_type=args.add_on_layers_type)
+                                  add_on_layers_type=args.add_on_layers_type,
+                                  use_sa=bool(args.use_sa))
     ppnet.to(device)
     ppnet_without_ddp = ppnet
     if args.distributed:
@@ -331,6 +338,11 @@ if __name__ == '__main__':
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         ppnet_without_ddp.load_state_dict(checkpoint['model'])
+
+    # Ensure runtime SA flag matches args (and freeze weights if SA is off).
+    ppnet_without_ddp.use_sa = bool(args.use_sa)
+    if not bool(args.use_sa):
+        ppnet_without_ddp.activation_weight.requires_grad = False
 
     # Define optimizer
     joint_optimizer_specs = \
