@@ -9,7 +9,6 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 import platform
 import datetime
-import re
 
 from util.datasets import Cub2011Eval, BarefootEval
 from util.preprocess import mean, std
@@ -41,26 +40,21 @@ def _class_dir_name(label_idx, nb_classes):
     return format(int(label_idx), '0{}d'.format(nd))
 
 
-def _extract_run_meta_from_resume(resume_path):
+def _run_folder_from_resume(resume_path):
     """
-    Parse run metadata from output_cosine run folder name:
-    <N>p_<arch>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train
+    Resolve the training run folder name from a checkpoint path so output_view
+    matches output_cosine naming, including ablation suffixes, e.g.:
+      output_cosine/2p_resnet34_..._train_abl_sa0_sdfa1_orth1/checkpoints/best_model.pth
+    -> 2p_resnet34_..._train_abl_sa0_sdfa1_orth1
     """
     if not resume_path:
         return None
-    run_dir = os.path.basename(os.path.dirname(os.path.dirname(resume_path)))
-    pat = re.compile(
-        r'^(?P<n>\d+)p_(?P<arch>.+?)_(?P<date>\d{8})_(?P<time>\d{6})_'
-        r'(?P<seed>[^_]+)_(?P<lr>[^_]+)_(?P<opt>[^_]+)_(?P<epochs>\d+)_train$'
-    )
-    m = pat.match(run_dir)
-    if not m:
+    norm = os.path.normpath(resume_path)
+    parent = os.path.dirname(norm)
+    if os.path.basename(parent) != 'checkpoints':
         return None
-    return {
-        'date': m.group('date'),
-        'time': m.group('time'),
-        'epochs': m.group('epochs'),
-    }
+    run_folder = os.path.basename(os.path.dirname(parent))
+    return run_folder or None
 
 
 @torch.no_grad()
@@ -280,24 +274,20 @@ def main():
     if checkpoint is not None:
         ppnet.load_state_dict(checkpoint['model'])
 
-    # Avoid overwriting and keep paired naming with output_cosine:
-    # <N>p_<base_architecture>_YYYYMMDD_HHMMSS_<epochs>_img
-    run_meta = _extract_run_meta_from_resume(args.resume)
-    if run_meta is not None:
-        date_part = run_meta['date']
-        time_part = run_meta['time']
-        epochs_tag = run_meta['epochs']
+    # Avoid overwriting: mirror output_cosine run folder name + _img (same basename as training run).
+    run_folder = _run_folder_from_resume(args.resume)
+    if run_folder:
+        run_dir = f"{run_folder}_img"
     else:
         date_part = datetime.datetime.now().strftime('%Y%m%d')
         time_part = datetime.datetime.now().strftime('%H%M%S')
         if checkpoint is not None and 'args' in checkpoint and hasattr(checkpoint['args'], 'epochs'):
             epochs_tag = str(int(checkpoint['args'].epochs))
         elif checkpoint is not None and 'epoch' in checkpoint:
-            # checkpoint['epoch'] is 0-based
             epochs_tag = str(int(checkpoint['epoch']) + 1)
         else:
             epochs_tag = 'na'
-    run_dir = f"{args.nb_classes}p_{args.base_architecture}_{date_part}_{time_part}_{epochs_tag}_img"
+        run_dir = f"{args.nb_classes}p_{args.base_architecture}_{date_part}_{time_part}_{epochs_tag}_img"
     args.output_path = os.path.join(args.output_path, run_dir)
     visualize_corresponding_regions(ppnet, args, half_size=args.half_size)
 
