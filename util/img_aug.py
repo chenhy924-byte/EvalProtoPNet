@@ -11,8 +11,22 @@ def makedir(path):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_path', type=str, default='datasets/Barefoot_Dataset/',
-                    help='数据集根目录，内含 train_cropped/；默认: datasets/Barefoot_Dataset/')
+def _default_data_path():
+    here = os.path.abspath(os.path.dirname(__file__))
+    candidates = [
+        os.path.join(here, '..', 'datasets', 'Barefoot_Dataset_200'),
+        os.path.join(here, '..', 'datasets', 'Barefoot_Dataset'),
+        os.path.join(here, '..', '..', 'datasets', 'Barefoot_Dataset_200'),
+        os.path.join(here, '..', '..', 'datasets', 'Barefoot_Dataset'),
+    ]
+    candidates = [os.path.abspath(os.path.normpath(p)) for p in candidates]
+    for p in candidates:
+        if os.path.isdir(p):
+            return p
+    return 'datasets/Barefoot_Dataset/'
+
+parser.add_argument('--data_path', type=str, default=_default_data_path(),
+                    help='数据集根目录，内含 train_cropped/；默认自动探测 datasets/ 或 ../datasets/')
 args = parser.parse_args()
 
 datasets_root_dir = args.data_path

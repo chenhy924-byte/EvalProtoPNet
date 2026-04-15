@@ -53,6 +53,25 @@ def _fmt_lr_for_run_name(lr):
     return np.format_float_scientific(lr, precision=6, unique=True, trim='-')
 
 
+def _default_data_path():
+    """
+    Prefer repo-local datasets/; fallback to ../datasets/ (common on Windows when datasets
+    live alongside the repo).
+    """
+    here = os.path.abspath(os.path.dirname(__file__))
+    candidates = [
+        os.path.join(here, 'datasets', 'Barefoot_Dataset_200'),
+        os.path.join(here, 'datasets', 'Barefoot_Dataset'),
+        os.path.abspath(os.path.join(here, '..', 'datasets', 'Barefoot_Dataset_200')),
+        os.path.abspath(os.path.join(here, '..', 'datasets', 'Barefoot_Dataset')),
+    ]
+    for p in candidates:
+        if os.path.isdir(p):
+            return p
+    # Keep the legacy relative default as last resort.
+    return 'datasets/Barefoot_Dataset/'
+
+
 def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -107,7 +126,7 @@ parser.add_argument('--eval', action='store_true', help='Perform evaluation only
 parser.add_argument('--resume', default='', help='resume from checkpoint')  
 # Data（赤足压力数据集：默认路径与子目录）
 parser.add_argument('--data_set', default='Barefoot_Dataset', type=str)
-parser.add_argument('--data_path', type=str, default='datasets/Barefoot_Dataset/')
+parser.add_argument('--data_path', type=str, default=_default_data_path())
 parser.add_argument('--train_batch_size', default=80, type=int)
 parser.add_argument('--test_batch_size', default=150, type=int)
 

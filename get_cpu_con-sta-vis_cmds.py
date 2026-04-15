@@ -2,6 +2,11 @@
 import re
 import os
 
+def _ask(prompt: str, default: str) -> str:
+    s = input(f"{prompt} (默认: {default})\n> ").strip()
+    return s if s else default
+
+
 def generate_commands():
     print("="*60)
     print("请粘贴 Windows 路径 (例如: D:\\SeniorThesis\\...\\2p_resnet34_...)")
@@ -27,7 +32,9 @@ def generate_commands():
         return
 
     # 3. 构造路径参数
-    data_path = f"datasets/Barefoot_Dataset_{p_num}"
+    # datasets folder may live alongside the repo (../datasets) on Windows; allow override.
+    data_root = _ask("请输入数据集根目录（例如: ../datasets 或 D:\\SeniorThesis\\datasets）", "../datasets")
+    data_path = os.path.join(data_root, f"Barefoot_Dataset_{p_num}")
     # main.py now saves best model as best_model.pth and final model as final_model.pth
     resume_path = f"output_cosine/{folder_name}/checkpoints/best_model.pth"
     

@@ -2,6 +2,11 @@
 
 import re
 
+def _ask(prompt: str, default: str) -> str:
+    s = input(f"{prompt} (默认: {default})\n> ").strip()
+    return s if s else default
+
+
 def generate_commands():
     print("请输入复制的路径 (例如: autodl-tmp/EvalProtoPNet/output_cosine/...)")
     raw_input = input("> ").strip()
@@ -16,20 +21,22 @@ def generate_commands():
     # 2. 提取实验文件夹名 (最后一级)
     folder_name = raw_input.split('/')[-1]
     
-    # 3. 提取模型架构 (通过正则匹配 200p_ 之后的内容)
-    # 假设格式固定为 200p_架构名称_日期...
-    arch_match = re.search(r'200p_([a-zA-Z0-9]+)_', folder_name)
-    if arch_match:
-        arch = arch_match.group(1)
+    # 3. 解析人数和架构: {数字}p_{arch}_{date}...
+    match = re.search(r'(\d+)p_([a-zA-Z0-9]+)_', folder_name)
+    if match:
+        p_num = match.group(1)
+        arch = match.group(2)
     else:
-        # 如果正则匹配失败，尝试通过下划线切分（备选方案）
+        p_num = "200"
         try:
             arch = folder_name.split('_')[1]
         except IndexError:
             arch = "unknown"
 
     # 模板配置
-    data_path = f"/root/{storage_type}/datasets/Barefoot_Dataset_200"
+    default_data_root = f"/root/{storage_type}/datasets"
+    data_root = _ask("请输入数据集根目录（例如: /root/autodl-tmp/datasets）", default_data_root)
+    data_path = f"{data_root}/Barefoot_Dataset_{p_num}"
     # main.py now saves best model as best_model.pth and final model as final_model.pth
     resume_path = f"output_cosine/{folder_name}/checkpoints/best_model.pth"
     
@@ -40,7 +47,7 @@ def generate_commands():
     ]
 
     print("\n" + "="*50)
-    print(f"检测到架构: {arch} | 存储位置: {storage_type}")
+    print(f"检测到人数: {p_num} | 架构: {arch} | 存储位置: {storage_type}")
     print("="*50 + "\n")
 
     for label, script in templates:

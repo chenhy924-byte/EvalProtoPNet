@@ -7,7 +7,17 @@ export PYTHONPATH="./:${PYTHONPATH:-}"
 
 model="${1:-}"
 num_gpus="${2:-}"
-data_path="${3:-datasets/Barefoot_Dataset}"
+default_data_path="datasets/Barefoot_Dataset"
+if [[ ! -d "${default_data_path}" && -d "../datasets/Barefoot_Dataset" ]]; then
+  default_data_path="../datasets/Barefoot_Dataset"
+fi
+if [[ ! -d "${default_data_path}" && -d "../datasets/Barefoot_Dataset_200" ]]; then
+  default_data_path="../datasets/Barefoot_Dataset_200"
+fi
+if [[ -d "datasets/Barefoot_Dataset_200" ]]; then
+  default_data_path="datasets/Barefoot_Dataset_200"
+fi
+data_path="${3:-${default_data_path}}"
 output_root="${4:-output_cosine}"
 
 conda_env="${CONDA_ENV:-}"

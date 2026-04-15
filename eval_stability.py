@@ -8,6 +8,20 @@ import random
 import numpy as np
     
 
+def _default_data_path():
+    here = os.path.abspath(os.path.dirname(__file__))
+    candidates = [
+        os.path.join(here, 'datasets', 'Barefoot_Dataset_200'),
+        os.path.abspath(os.path.join(here, '..', 'datasets', 'Barefoot_Dataset_200')),
+        os.path.join(here, 'datasets', 'Barefoot_Dataset'),
+        os.path.abspath(os.path.join(here, '..', 'datasets', 'Barefoot_Dataset')),
+    ]
+    for p in candidates:
+        if os.path.isdir(p):
+            return p
+    return 'datasets/Barefoot_Dataset/'
+
+
 def set_determinism(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -29,7 +43,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpuid', type=str, default='0')
     parser.add_argument('--data_set', default='Barefoot_Dataset', type=str)
-    parser.add_argument('--data_path', type=str, default='datasets/Barefoot_Dataset/')
+    parser.add_argument('--data_path', type=str, default=_default_data_path())
     parser.add_argument('--nb_classes', type=int, default=-1)
     parser.add_argument('--test_batch_size', type=int, default=30)
     parser.add_argument('--num_prototypes_per_class', type=int, default=10)
