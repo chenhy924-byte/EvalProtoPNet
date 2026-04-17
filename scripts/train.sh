@@ -18,7 +18,24 @@ if [[ -d "datasets/Barefoot_Dataset_200" ]]; then
   default_data_path="datasets/Barefoot_Dataset_200"
 fi
 data_path="${3:-${default_data_path}}"
-output_root="${4:-output_cosine}"
+# Optional positional args:
+#   $4: epochs (if numeric, optionally suffixed with `e`, e.g. 50e) OR output_root (otherwise)
+#   $5: output_root (only used when $4 is epochs)
+arg4="${4:-}"
+arg5="${5:-}"
+epochs_default="${EPOCHS:-30}"
+epochs="${epochs_default}"
+output_root="output_cosine"
+if [[ -n "${arg4}" ]]; then
+  if [[ "${arg4}" =~ ^[0-9]+$ || "${arg4}" =~ ^[0-9]+e$ ]]; then
+    epochs="${arg4%e}"
+    if [[ -n "${arg5}" ]]; then
+      output_root="${arg5}"
+    fi
+  else
+    output_root="${arg4}"
+  fi
+fi
 
 conda_env="${CONDA_ENV:-}"
 
@@ -31,11 +48,14 @@ py_bin="${PYTHON_BIN:-python}"
 torchrun_bin="${TORCHRUN_BIN:-torchrun}"
 
 if [[ -z "$model" || -z "$num_gpus" ]]; then
-  echo "Usage: sh scripts/train.sh <model> <num_gpus> [data_path] [output_root]"
+  echo "Usage: sh scripts/train.sh <model> <num_gpus> [data_path] [epochs]e [output_root]"
   echo "  - model: resnet34|resnet152|vgg19|densenet121|densenet161|resnet18|resnet50|resnet101|vgg16|..."
   echo "  - num_gpus: 0=CPU, 1=single GPU, >=2=DDP multi-GPU"
   echo "  - data_path: datasets/Barefoot_Dataset_2|_5|_200 (default: datasets/Barefoot_Dataset)"
-  echo "  - output_root: output directory root (default: output_cosine); run folder: <N>p_<model>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train (N=class count)"
+  echo "  - epochs: training epochs (default: ${epochs_default}); you may write 50 or 50e for readability"
+  echo "  - output_root: output directory root (default: output_cosine)"
+  echo "    Backwards compatible: if the 4th arg is non-numeric, it's treated as output_root."
+  echo "    Run folder: <N>p_<model>_YYYYMMDD_HHMMSS_<seed>_<lr>_<opt>_<epochs>_train (N=class count)"
   exit 2
 fi
 
@@ -78,7 +98,6 @@ warmup_epochs="${WARMUP_EPOCHS:-5}"
 decay_epochs=3
 decay_rate=0.2
 sched=step
-epochs="${EPOCHS:-30}"
 input_size=224
 dim=64
 
